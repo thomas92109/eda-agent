@@ -1,0 +1,259 @@
+{
+ "Errors": [],
+ "SearchResults": {
+  "NumberOfResult": 5,
+  "Parts": [
+   {
+    "Availability": "50881 In Stock",
+    "DataSheetUrl": "",
+    "Description": "Operational Amplifiers - Op Amps Dual Op Amp",
+    "FactoryStock": "0",
+    "Category": "Operational Amplifiers - Op Amps",
+    "LeadTime": "182 Days",
+    "LifecycleStatus": null,
+    "Manufacturer": "Texas Instruments",
+    "ManufacturerPartNumber": "LM358DR",
+    "Min": "1",
+    "Mult": "1",
+    "MouserPartNumber": "595-LM358DR",
+    "ProductAttributes": [
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Reel"
+     },
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Cut Tape"
+     },
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "MouseReel",
+      "AttributeCost": "$7.00 MouseReel\u2122 fee will be added and calculated in your shopping cart. All MouseReel\u2122 orders are non-cancellable and non-returnable."
+     },
+     {
+      "AttributeName": "Standard Pack Qty",
+      "AttributeValue": "2500"
+     }
+    ],
+    "PriceBreaks": [
+     {
+      "Quantity": 1,
+      "Price": "$0.26",
+      "RawPrice": 0.26,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 10,
+      "Price": "$0.175",
+      "RawPrice": 0.175,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 25,
+      "Price": "$0.155",
+      "RawPrice": 0.155,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 100,
+      "Price": "$0.133",
+      "RawPrice": 0.133,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 250,
+      "Price": "$0.121",
+      "RawPrice": 0.121,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 500,
+      "Price": "$0.119",
+      "RawPrice": 0.119,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 1000,
+      "Price": "$0.113",
+      "RawPrice": 0.113,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 2500,
+      "Price": "$0.106",
+      "RawPrice": 0.106,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 5000,
+      "Price": "$0.103",
+      "RawPrice": 0.103,
+      "Currency": "USD"
+     }
+    ],
+    "AlternatePackagings": [
+     {
+      "APMfrPN": "LM358DG4"
+     },
+     {
+      "APMfrPN": " LM358DRG4"
+     }
+    ],
+    "ProductDetailUrl": "https://www.mouser.com/en/ProductDetail/Texas-Instruments/LM358DR?qs=Zu35EjizYSSY6pJ37yjmHA%3D%3D",
+    "Reeling": true,
+    "ROHSStatus": "RoHS Compliant",
+    "SuggestedReplacement": "",
+    "AvailabilityInStock": "50881",
+    "AvailabilityOnOrder": [
+     {
+      "Quantity": 97500,
+      "Date": "2027-04-15T00:00:00"
+     },
+     {
+      "Quantity": 110000,
+      "Date": "2027-08-09T00:00:00"
+     }
+    ],
+    "InfoMessages": [],
+    "SurchargeMessages": null
+   },
+   {
+    "DataSheetUrl": "",
+    "Description": "Operational Amplifiers - Op Amps 2 circuits; 3 to 32V 0 to +70 Op Temp",
+    "FactoryStock": null,
+    "Category": "Operational Amplifiers - Op Amps",
+    "LeadTime": "49 Days",
+    "LifecycleStatus": "Not Recommended for New Designs",
+    "Manufacturer": "ROHM Semiconductor",
+    "ManufacturerPartNumber": "LM358DR",
+    "Min": "2500",
+    "Mult": "2500",
+    "MouserPartNumber": "755-LM358DR",
+    "ProductAttributes": [
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Reel"
+     },
+     {
+      "AttributeName": "Standard Pack Qty",
+      "AttributeValue": "2500"
+     }
+    ],
+    "PriceBreaks": [],
+    "AlternatePackagings": null,
+    "ProductDetailUrl": "https://www.mouser.com/en/ProductDetail/ROHM-Semiconductor/LM358DR?qs=rew4TcUmwq8k4%252BUaGUH2bg%3D%3D",
+    "Reeling": true,
+    "ROHSStatus": "RoHS Compliant",
+    "SuggestedReplacement": "755-LM358FJ-GE2",
+    "AvailabilityInStock": null,
+    "AvailabilityOnOrder": [],
+    "InfoMessages": [],
+    "SurchargeMessages": null,
+    "RestrictionMessage": "Mouser does not presently sell this product in your region."
+   },
+   {
+    "Availability": "59071 In Stock",
+    "DataSheetUrl": "",
+    "Description": "Operational Amplifiers - Op Amps 3-32V Dual Lo PWR Commercial Temp",
+    "FactoryStock": "0",
+    "Category": "Operational Amplifiers - Op Amps",
+    "LeadTime": "70 Days",
+    "LifecycleStatus": null,
+    "Manufacturer": "onsemi",
+    "ManufacturerPartNumber": "LM358DR2G",
+    "Min": "1",
+    "Mult": "1",
+    "MouserPartNumber": "863-LM358DR2G",
+    "ProductAttributes": [
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Reel"
+     },
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "Cut Tape"
+     },
+     {
+      "AttributeName": "Packaging",
+      "AttributeValue": "MouseReel",
+      "AttributeCost": "$7.00 MouseReel\u2122 fee will be added and calculated in your shopping cart. All MouseReel\u2122 orders are non-cancellable and non-returnable."
+     },
+     {
+      "AttributeName": "Standard Pack Qty",
+      "AttributeValue": "2500"
+     }
+    ],
+    "PriceBreaks": [
+     {
+      "Quantity": 1,
+      "Price": "$0.26",
+      "RawPrice": 0.26,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 10,
+      "Price": "$0.179",
+      "RawPrice": 0.179,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 25,
+      "Price": "$0.158",
+      "RawPrice": 0.158,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 100,
+      "Price": "$0.136",
+      "RawPrice": 0.136,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 250,
+      "Price": "$0.125",
+      "RawPrice": 0.125,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 500,
+      "Price": "$0.119",
+      "RawPrice": 0.119,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 1000,
+      "Price": "$0.113",
+      "RawPrice": 0.113,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 2500,
+      "Price": "$0.107",
+      "RawPrice": 0.107,
+      "Currency": "USD"
+     },
+     {
+      "Quantity": 5000,
+      "Price": "$0.098",
+      "RawPrice": 0.098,
+      "Currency": "USD"
+     }
+    ],
+    "AlternatePackagings": null,
+    "ProductDetailUrl": "https://www.mouser.com/en/ProductDetail/onsemi/LM358DR2G?qs=2OtswVQKCOFTvDtJvQ3XHw%3D%3D",
+    "Reeling": true,
+    "ROHSStatus": "RoHS Compliant",
+    "SuggestedReplacement": "",
+    "AvailabilityInStock": "59071",
+    "AvailabilityOnOrder": [
+     {
+      "Quantity": 42500,
+      "Date": "2026-12-07T00:00:00"
+     }
+    ],
+    "InfoMessages": [],
+    "SurchargeMessages": null
+   }
+  ]
+ }
+}

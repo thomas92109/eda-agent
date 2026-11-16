@@ -73,6 +73,19 @@ def register_parts_tools(mcp):
         geometry. Remote providers need the internet; local ones still
         answer without it. An empty query lists the providers.
 
+        A digikey or mouser hit also has ``sourcing``: ``stock``,
+        ``manufacturer_stock``, ``lifecycle`` (``status`` active, new,
+        preliminary, nrnd, last_time_buy, end_of_life, obsolete or
+        discontinued), ``lead_time``, ``product_url``, ``retrieved_at``
+        and ``offers``, one per orderable number: ``distributor_pn``,
+        ``packaging``, ``stock``, ``moq``, ``multiple``, ``currency``
+        and ``price_breaks`` ({quantity, unit_price}). null means the
+        distributor did not say: a null status is not "active".
+        ``freshness`` says how current the figures are; a search can
+        lag, part_fetch reads live. Search by MPN, keyword or
+        distributor number. Two products sharing an MPN (two makers)
+        get distinct refs, by distributor number instead of MPN.
+
         DATASHEET DISCIPLINE: a hit is a lead. Blank ``provenance`` or
         ``license`` means unknown; audit an imported footprint with
         lib_audit_footprint_vs_datasheet before trusting it.
@@ -150,6 +163,14 @@ def register_parts_tools(mcp):
         with no ``provider`` and no known prefix is refused, never
         guessed; ``provider`` wins over a prefix.
 
+        For digikey and mouser the id is an MPN or a ``distributor_pn``
+        from ``sourcing.offers``, and ``detail.sourcing`` holds the live
+        stock, lifecycle and price breaks (see part_search). An MPN
+        that names several products there is never resolved to one:
+        the reply is {"ok": False, "ambiguous": True, "candidates"},
+        each candidate with its ``ref``, manufacturer and distributor
+        numbers. Fetch the candidate's ``ref``.
+
         ``download_dir`` also writes the provider's library files there.
         A downloaded KiCad file in a newer format than the local KiCad
         reads comes back with a ``*_warning`` entry.
@@ -160,6 +181,7 @@ def register_parts_tools(mcp):
         for.
         """
         from eda_agent.libimport.providers import (
+            AmbiguousPart,
             ProviderError,
             ProviderUnavailable,
             available_providers,
@@ -200,6 +222,10 @@ def register_parts_tools(mcp):
         except ProviderUnavailable as exc:
             return {"ok": False, "unavailable": str(exc),
                     "provider": source.name}
+        except AmbiguousPart as exc:
+            return {"ok": False, "ambiguous": True, "reason": str(exc),
+                    "provider": source.name, "part_id": part_id,
+                    "candidates": exc.candidates}
         except ProviderError as exc:
             return {"ok": False, "reason": str(exc), "provider": source.name}
 

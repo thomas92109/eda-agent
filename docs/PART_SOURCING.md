@@ -22,11 +22,11 @@ tells you whether you can draw it.
 | Provider | Kind | What it is | Network | Credential |
 |---|---|---|---|---|
 | `altium_local` | library | The `.SchLib` libraries already on this machine. The only source that answers whether you **already own** a part, which is what stops an import creating a second symbol with a slightly different name. Reads the OLE files directly, so it works with Altium closed. Nothing to download: a hit is already an Altium symbol. Point it with `EDA_AGENT_ALTIUM_LIBRARIES` | no | no |
-| `digikey` | catalogue | Digi-Key's catalogue: MPN, datasheet, lifecycle and live stock. Needs an OAuth client from their developer portal via `DIGIKEY_CLIENT_ID` and `DIGIKEY_CLIENT_SECRET` | yes | yes |
+| `digikey` | catalogue | Digi-Key's catalogue: MPN, datasheet, lifecycle, stock, lead time and price breaks per packaging (see [Distributor sourcing data](#distributor-sourcing-data)). Needs an OAuth client from their developer portal via `DIGIKEY_CLIENT_ID` and `DIGIKEY_CLIENT_SECRET`; `DIGIKEY_LOCALE_SITE`, `DIGIKEY_LOCALE_LANGUAGE` and `DIGIKEY_LOCALE_CURRENCY` pick the market | yes | yes |
 | `easyeda` | library | EasyEDA / LCSC component data. Fetch by LCSC part number works; **search is unavailable** because the upstream endpoint was withdrawn | yes | no |
 | `element14` | catalogue | element14 (Farnell, Newark): MPN, datasheet and stock. Needs `ELEMENT14_API_KEY`; `ELEMENT14_STORE` picks the regional storefront, which changes the catalogue you see | yes | yes |
 | `kicad_local` | library | The libraries KiCad installed on this machine. A fetch resolves the symbol's footprint reference against the installed `.pretty` libraries and the footprint's model reference against the `3dmodels` tree, so a hit can be a whole part with a 3D body (18003 of the 22728 symbols shipped with KiCad 10.0.1 name a footprint). No MPN or datasheet for most entries | no | no |
-| `mouser` | catalogue | Mouser's catalogue: MPN, datasheet and stock. Needs `MOUSER_API_KEY` | yes | yes |
+| `mouser` | catalogue | Mouser's catalogue: MPN, datasheet, lifecycle, stock, lead time and price breaks (see [Distributor sourcing data](#distributor-sourcing-data)). Needs `MOUSER_API_KEY`; prices and currency follow that key's account | yes | yes |
 | `nexar` | catalogue | Nexar, the API behind Octopart: part number, manufacturer, description and datasheet link, no prices or stock. Needs `NEXAR_CLIENT_ID` and `NEXAR_CLIENT_SECRET` | yes | yes |
 | `partreel` | library | An open registry of verified KiCad parts, no login and no key: `/api/v1/parts.json` serves 21,657 parts. Yields KiCad files, usable in Altium through `lib_kicad_import`. Points at PartReel the way the Digi-Key client points at Digi-Key; `PARTS_REGISTRY_URL` redirects it at any API-compatible registry, since the API shape is the contract rather than the host. Run by a third party, proposed in issue #12 by its operator | yes | no |
 | `public_libraries` | library | Openly published KiCad libraries, no login and no key: KiCad's own 12,011 footprints, Digi-Key's 936, and JLCPCB's 20 symbol libraries plus footprints. Mostly **land patterns rather than symbols**, which is what you want once the part is chosen but its geometry is not. Indexed through GitHub's documented API, one request per repository, cached on disk for a week. `EDA_AGENT_CACHE_DIR` relocates the cache | yes | no |
@@ -73,10 +73,67 @@ and path exist and refused only for lack of a credential. Three further
 candidates were probed and **dropped** for answering 404 on the recalled URL
 rather than being shipped as plausible guesses. What that probing could *not*
 establish, without a paid credential, is the request and response shapes. So
-every catalogue publishes `verified_live: false`, and the parsers are written
-to degrade a single hit on a renamed field rather than assume a shape and lose
-the whole search. The flag flips only when a client has actually run against
-the live API.
+a catalogue publishes `verified_live: false` until its client has actually run
+against the live API, and the parsers are written to degrade a single hit on a
+renamed field rather than assume a shape and lose the whole search. `digikey`
+and `mouser` have run with a credential and publish `true`; `element14`,
+`nexar` and `tme` have not.
+
+## Distributor sourcing data
+
+A `digikey` or `mouser` hit carries a `sourcing` object beside its identity, in
+`part_search` hits and in `part_fetch`'s `detail`. Both clients only read the
+distributors' search APIs: nothing here orders, quotes or fills a cart.
+
+| Field | What it is |
+|---|---|
+| `distributor` | `digikey` or `mouser` |
+| `product_url` | The distributor's product page |
+| `stock` | Units the distributor has now |
+| `manufacturer_stock` | Units at the manufacturer, where the distributor reports it (Mouser's factory stock, Digi-Key's manufacturer public quantity) |
+| `on_order` | Mouser's incoming stock, `[{quantity, date}]`; `null` from Digi-Key, which does not report it |
+| `lifecycle` | `status` is one of `active`, `new`, `preliminary`, `nrnd`, `last_time_buy`, `end_of_life`, `obsolete`, `discontinued`, or `null`; `raw` is the distributor's own wording; `discontinued` and `end_of_life` are its flags |
+| `lead_time` | `raw` as given and `weeks` when the unit is clear |
+| `suggested_replacement` | Mouser's suggestion, when it makes one |
+| `offers` | One per orderable number: `distributor_pn`, `packaging`, `stock`, `moq`, `multiple`, `standard_package`, `currency`, `price_breaks` (`[{quantity, unit_price}]`) and `provider_specific` |
+| `locale` | The site, language and currency the figures are for |
+| `retrieved_at`, `freshness` | When the reply was read (UTC) and how current the distributor says it is |
+
+**`null` means the distributor did not say.** Mouser sends no lifecycle status
+for most parts in production, so a `null` status is "not stated", never
+"active". A part with no price breaks has an empty list, not a price of zero.
+A lifecycle wording or lead-time unit this code does not know (a key registered
+in another language gets translated ones) keeps its `raw` text and a `null`
+reading.
+
+**Packagings stay separate where the distributor separates them.** Digi-Key
+sells tape and reel, cut tape and Digi-Reel under three numbers with three
+price ladders, so they are three offers. Mouser sells every packaging of a part
+under one number, so it is one offer whose `packaging` lists them. Digi-Key
+states no order multiple, so `multiple` is `null` there and `standard_package`
+is reported on its own.
+
+**How current the figures are.** Digi-Key says its keyword search may be up to
+24 hours old, and `freshness` says so on a search hit; `part_fetch` reads its
+ProductDetails, which is live. Mouser makes no statement, so its `freshness`
+names only the time of reading. Check `retrieved_at` before relying on a stock
+figure.
+
+**One number, several parts.** A manufacturer part number is not always one
+part: `LM358DR` is made by Texas Instruments and by Rohm, and both distributors
+list both. A hit's `ref` is `provider:MPN` as long as that names one product in
+the result; where two hits share the MPN, each takes its distributor number
+instead (`digikey:296-LM358DRTR-ND`, `mouser:595-LM358DR`), so no two products
+carry the same `ref`. `part_fetch` takes either form, and any `distributor_pn`
+from `sourcing.offers`. Given an MPN that names several products it picks none:
+the reply is `{"ok": false, "ambiguous": true, "candidates": [...]}`, each
+candidate with its `ref`, manufacturer, MPN and distributor numbers per
+packaging.
+
+Mouser prices come from its numeric `RawPrice`. Where a reply has only the
+formatted text, it is read when it can mean one thing (`0,285 €`, `$9,999.99`)
+and otherwise kept as `price_text` with a `null` price: `1.234` is one and a
+bit in one locale and over a thousand in another.
 
 **Access policy of the hosts, checked rather than assumed.** Every host these
 providers reach was checked for a `robots.txt` before anything was built

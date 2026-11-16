@@ -255,8 +255,11 @@ def test_the_unverified_claim_is_published_not_hidden(cls):
 
     Saying so is the same discipline the tool catalog already applies to
     maturity: a claim nobody checked is worth less than an honest blank.
+    DigiKey and Mouser have run against the live API with a credential
+    (tests/test_distributor_sourcing.py holds their replies); the other
+    three have not.
     """
-    assert cls.verified_live is False, (
+    assert cls.verified_live is (cls in (DigiKeyProvider, MouserProvider)), (
         "flip this only when the client has actually run against the "
         "live API with a real credential")
 
