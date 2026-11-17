@@ -261,3 +261,182 @@ def register_parts_tools(mcp):
                     result["files"] = {}
                     result["download_error"] = str(exc)
         return result
+
+    def _lists(provider: str):
+        """The list client for ``provider``, or the reply refusing it."""
+        if str(provider or "").strip().lower() != "digikey":
+            return None, {"ok": False, "reason": (
+                f"no saved-list support for {provider!r}; only digikey "
+                "(MyLists) has it")}
+        from eda_agent.libimport.providers.digikey_lists import DigiKeyLists
+
+        return DigiKeyLists(), None
+
+    def _list_call(provider: str, work) -> dict[str, Any]:
+        """Run ``work`` on the list client and word its failures."""
+        from eda_agent.libimport.providers import (
+            ProviderError,
+            ProviderUnavailable,
+        )
+        from eda_agent.libimport.providers.digikey_lists import (
+            ListInputError,
+        )
+
+        lists, refused = _lists(provider)
+        if refused:
+            return refused
+        try:
+            return {"ok": True, "provider": lists.name, **work(lists)}
+        except ListInputError as exc:
+            out = {"ok": False, "reason": str(exc), "provider": lists.name}
+            if exc.problems:
+                out["problems"] = exc.problems
+            return out
+        except ProviderUnavailable as exc:
+            return {"ok": False, "unavailable": str(exc),
+                    "provider": lists.name}
+        except ProviderError as exc:
+            return {"ok": False, "reason": str(exc), "provider": lists.name}
+        except OSError as exc:
+            return {"ok": False, "provider": lists.name, "reason": (
+                f"the sign-in file could not be read or written: {exc}")}
+
+    @mcp.tool()
+    async def part_list_login(
+        returned_url: str = "",
+        provider: str = "digikey",
+    ) -> dict[str, Any]:
+        """Sign in to a distributor account so its saved lists can be used.
+
+        DigiKey MyLists works only for a signed-in user (three-legged
+        OAuth), once per 90 days. Two steps:
+
+        1. Call with no ``returned_url``: the reply has ``signed_in``
+           and, when not signed in, ``authorize_url``. The user opens it
+           in a browser, signs in and allows access.
+        2. The browser ends on the app's redirect address
+           (https://localhost unless DIGIKEY_REDIRECT_URI names another),
+           usually a page that cannot load. Call again with that page's
+           whole address as ``returned_url``. The code in it lasts ONE
+           MINUTE and works once.
+
+        If a minute is too short through a chat, the user can run
+        ``python -m eda_agent.libimport.providers.digikey_lists login``
+        in a terminal instead.
+
+        The tokens are saved in the user's profile (DIGIKEY_TOKEN_FILE
+        moves the file) and are never returned. Needs DIGIKEY_CLIENT_ID
+        and DIGIKEY_CLIENT_SECRET for an app subscribed to the MyLists
+        API with that redirect address registered.
+
+        Returns:
+            {"ok", "signed_in", "sign_in_lasts_days"} and, to start a
+            sign-in, "authorize_url", "redirect_uri" and "next".
+        """
+        def work(lists):
+            if str(returned_url or "").strip():
+                return lists.finish_login(returned_url)
+            status = lists.status()
+            if status.get("signed_in"):
+                return status
+            return {**status, **lists.authorize_url(), "next": (
+                "open authorize_url, sign in, then call part_list_login "
+                "with returned_url set to the address the browser ended "
+                "on, within one minute")}
+
+        return _list_call(provider, work)
+
+    @mcp.tool()
+    async def part_list_create(
+        name: str,
+        visibility: str = "private",
+        provider: str = "digikey",
+    ) -> dict[str, Any]:
+        """Create an empty saved parts list in the distributor account.
+
+        WRITES TO THE USER'S DIGIKEY ACCOUNT: create a list only when
+        the user asked for it. It is a list, not an order: nothing here
+        touches a cart or buys anything.
+
+        The list is private unless ``visibility`` is "readonly" or
+        "readwrite" (shared with co-workers of the account). It is set
+        to keep part numbers, quantities and references as entered.
+
+        Returns:
+            {"ok", "list_id", "name", "visibility", ...} as DigiKey
+            stored it; ``differences`` when that is not what was asked.
+            Needs part_list_login first.
+        """
+        return _list_call(
+            provider, lambda lists: lists.create_list(name, visibility))
+
+    @mcp.tool()
+    async def part_list_add(
+        list_id: str,
+        items: list[dict[str, Any]],
+        check_products: bool = True,
+        provider: str = "digikey",
+    ) -> dict[str, Any]:
+        """Add parts to a saved list, then read it back and compare.
+
+        WRITES TO THE USER'S DIGIKEY ACCOUNT. Adds to a list; orders
+        nothing.
+
+        Each item: ``sku`` (the exact DigiKey part number, a
+        ``distributor_pn`` from part_search; it picks the packaging),
+        ``quantity`` (whole, 1 or more) and ``designators`` (a list, or
+        a string taken as written). The designators, all of them, comma
+        separated, become both the part's CustomerReference (DigiKey
+        prints it on the bag label) and its ReferenceDesignator;
+        ``customer_reference`` or ``reference_designator`` set one of
+        them otherwise. ``description`` is the component's Description
+        parameter, kept in the part's notes; ``manufacturer`` is
+        optional. No other field is accepted: a component's Comment is
+        never sent.
+
+        Nothing is shortened. DigiKey publishes no length limit, so a
+        reference is sent whole and compared with what the list then
+        holds; a reference over 48 characters, about what a label fits,
+        gets a ``label_warning``.
+
+        Refused whole, with nothing added, when an item is malformed or
+        its ``sku`` is not a DigiKey part number (``check_products``
+        asks the catalogue, one read per distinct sku; a manufacturer
+        number is not accepted for a sku).
+
+        Returns:
+            {"ok", "list_id", "sent", "added", "verified", "items",
+            "list_total"}. Each item has what was sent, ``unique_id``,
+            ``digikey_description`` and ``differences`` (empty when the
+            list holds exactly what was sent). ``failed`` and
+            ``not_sent`` when DigiKey refused part of it.
+        """
+        return _list_call(provider, lambda lists: lists.add_items(
+            list_id, items, check_products=check_products))
+
+    @mcp.tool()
+    async def part_list_get(
+        list_id: str = "",
+        provider: str = "digikey",
+    ) -> dict[str, Any]:
+        """Read a saved parts list, or list the account's lists.
+
+        With no ``list_id``: {"ok", "lists": [{list_id, name,
+        visibility, total_parts, ...}]}.
+
+        With one: the list and its ``items``, each with ``sku`` (the
+        DigiKey part number), ``quantity``, ``customer_reference`` and
+        ``reference_designator`` exactly as stored, ``notes`` (where
+        part_list_add keeps the component's Description),
+        ``digikey_description``, ``manufacturer``,
+        ``manufacturer_part_number``, ``matched`` (false: DigiKey found
+        no product for the number), ``status`` and
+        ``quantity_available``. Reads only. Needs part_list_login first.
+        """
+        def work(lists):
+            if str(list_id or "").strip():
+                return lists.get_list(list_id)
+            found = lists.lists()
+            return {"lists": found, "count": len(found)}
+
+        return _list_call(provider, work)

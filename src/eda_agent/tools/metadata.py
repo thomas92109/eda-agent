@@ -279,6 +279,12 @@ INTERACTION_OVERRIDES = {
     # lib_extract_cse_zip, proj_export_pdf, pcb_render_svg) is SILENT,
     # so match them. part_search never writes and stays readonly.
     "part_fetch": SILENT,
+    # These write outside the editor: a list in the DigiKey account,
+    # and the sign-in file in the profile of whoever runs the server.
+    # part_list_get only reads and stays readonly.
+    "part_list_login": SILENT,
+    "part_list_create": SILENT,
+    "part_list_add": SILENT,
     # Writes the downloaded PDF and its sidecar into the workspace cache.
     # Filed under parts, which is offline and so falls back to READONLY;
     # a tool that writes files is SILENT here, as part_fetch is.

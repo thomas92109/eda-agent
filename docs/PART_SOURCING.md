@@ -186,6 +186,80 @@ only when its variant entry states one.
 stopped at `limit` with components left over (`truncated`), or when Altium
 returned part of the project empty; `incomplete_reason` says which.
 
+## Saved lists in a DigiKey account (MyLists)
+
+Four tools put parts into a DigiKey saved list and read it back. A list is
+not an order: nothing here touches a cart, a quote or DigiKey's Ordering API.
+
+| Tool | What it does |
+|---|---|
+| `part_list_login` | Signs the account owner in, once per 90 days |
+| `part_list_create` | Creates an empty list, private unless asked otherwise |
+| `part_list_add` | Adds parts, then reads the list and compares it with what was sent |
+| `part_list_get` | Reads one list, or lists the account's lists |
+
+**Setting up.** MyLists accepts only a three-legged OAuth token, so the app
+behind `DIGIKEY_CLIENT_ID` and `DIGIKEY_CLIENT_SECRET` needs two things in
+DigiKey's developer portal: a subscription to the **MyLists** API, and a
+registered redirect address. `https://localhost` is assumed; set
+`DIGIKEY_REDIRECT_URI` when the app registers another, character for
+character. `DIGIKEY_ACCOUNT_ID` is sent as `X-DIGIKEY-Account-Id` when set,
+for a user with several accounts.
+
+**Signing in.** `part_list_login` returns an address. The user opens it,
+signs in to DigiKey and allows access; the browser then goes to the redirect
+address, normally a page that cannot load, and that page's whole address is
+passed back as `returned_url`. The code in it lasts one minute and works
+once. Where a minute is too short to pass through a chat, run
+`python -m eda_agent.libimport.providers.digikey_lists login` in a terminal.
+
+The access token lasts 30 minutes and is renewed without anyone noticing.
+The refresh token lasts 90 days and DigiKey replaces it at every renewal, so
+it is saved the moment it arrives. Tokens live in
+`%LOCALAPPDATA%\eda-agent\digikey-tokens.json` (`DIGIKEY_TOKEN_FILE` moves
+it), sealed with the Windows user's DPAPI key; elsewhere the file is readable
+by its owner only. No token appears in a reply or a log.
+
+**An item to add.**
+
+| Field | What it is |
+|---|---|
+| `sku` | The exact DigiKey part number. It selects the packaging, so a manufacturer number is refused in its place |
+| `quantity` | A whole number, 1 or more |
+| `designators` | A list, or a string taken as written |
+| `customer_reference`, `reference_designator` | Set one of the two references to something other than the designators |
+| `description` | The component's `Description` parameter, kept in the part's `Notes` |
+| `manufacturer` | Optional |
+
+No other field is accepted, so a component's `Comment` cannot be sent.
+
+**References are never shortened.** The designators, all of them, comma
+separated, go into both `CustomerReference` and `ReferenceDesignator`.
+DigiKey's API description states no maximum length for either, so the whole
+text is sent and then compared with what the list holds; a difference is
+reported per item under `differences`. A customer reference over 48
+characters gets a `label_warning`: that figure is what DigiKey's forum says
+fits a bag label, and it is not a documented limit.
+
+**Whether the reference reaches the bag label** is stated only on DigiKey's
+forum, not in its API documentation: the list's customer reference is carried
+into the cart's customer reference, which is printed on the label. Nothing
+found says the reference designator is printed.
+
+**Bad input adds nothing.** A malformed item refuses the whole call, naming
+every problem of every item. With `check_products` (the default) each
+distinct `sku` is first read from the catalogue, and one that is not a
+DigiKey part number refuses the whole call too. If DigiKey rejects a batch
+part-way, the reply says how many items were sent and lists the rest under
+`not_sent`.
+
+**What comes back.** `part_list_add` returns each item as sent, with the
+`unique_id` DigiKey gave it, DigiKey's own `digikey_description`, and
+`differences`, empty when the list holds exactly the `sku`, quantity and
+references that were sent. `part_list_get` returns each part's `sku`,
+`quantity`, `customer_reference`, `reference_designator`, `notes`,
+`manufacturer_part_number`, `matched` and stock.
+
 **Access policy of the hosts, checked rather than assumed.** Every host these
 providers reach was checked for a `robots.txt` before anything was built
 against it. That check changed the design once: `gitlab.com/robots.txt` carries

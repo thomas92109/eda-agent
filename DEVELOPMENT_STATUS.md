@@ -9,13 +9,125 @@ out of any pull request meant for upstream.
 - Repository: `C:\Projects\eda-agent`, branch `feature/distributor-pricing`,
   tracking `origin` (the fork). `upstream` is the original project; nothing
   is pushed there.
-- Three commits sit on top of `e5f3469` (`upstream/main`, version 0.8.2):
+- Four commits sit on top of `e5f3469` (`upstream/main`, version 0.8.2):
   1. `f7b5769` "Add DigiKey and Mouser sourcing improvements" (session 1).
   2. `120e1f6` "Add compact purchasing BOM support" (session 2), pushed to
      `origin`.
   3. "Add Description to the purchasing BOM" (session 3), pushed to
      `origin`.
+  4. "Add DigiKey MyLists integration" (session 4), pushed to `origin`.
 - No pull request has been opened.
+
+## Session 4: DigiKey MyLists (sign-in works, list creation fails live)
+
+### Completed
+
+Four tools create a saved list in a DigiKey account, add parts to it and
+read it back. Scope is MyLists only: no cart, quote, checkout or ordering,
+and no connection to the Altium BOM yet.
+
+- `part_list_login`: three-legged OAuth sign-in in two steps (get the
+  address, pass back the address the browser ended on). A terminal version
+  exists for when the code's one minute is too short:
+  `python -m eda_agent.libimport.providers.digikey_lists login`.
+- `part_list_create`: private by default; settings ask DigiKey to keep the
+  entered part number, quantity and reference.
+- `part_list_add`: items of `sku`, `quantity`, `designators`, optional
+  `customer_reference`, `reference_designator`, `description`,
+  `manufacturer`. Reads the list back and reports per-item `differences`.
+- `part_list_get`: one list with its items, or all lists.
+
+Behaviour worth knowing:
+
+- **References:** all designators, comma separated, go into both
+  `CustomerReference` and `ReferenceDesignator`. Nothing is shortened. A
+  customer reference over 48 characters gets a warning.
+- **Description:** the Altium `Description` goes into the part's `Notes`,
+  because DigiKey's request has no description field. Any field outside the
+  seven above, `comment` included, refuses the call.
+- **Invalid products:** each distinct `sku` is read from Product Information
+  first; one that is not a DigiKey part number refuses the whole call with
+  nothing added. A manufacturer number is not accepted as a `sku`.
+- **Tokens:** access 30 minutes, refresh 90 days and replaced at every use.
+  Stored in `%LOCALAPPDATA%\eda-agent\digikey-tokens.json`, DPAPI-sealed,
+  never returned or logged. A refused token is renewed once; a lapsed
+  sign-in says to sign in again.
+
+### What DigiKey's documentation says, and does not
+
+Read from the MyLists v1 Swagger file and the OAuth pages on 2026-11-16.
+
+- MyLists is three-legged OAuth only. The redirect address must be https and
+  match the registered one exactly; `https://localhost` is DigiKey's
+  suggestion.
+- The part to add has no DigiKey-number field as such (it goes in
+  `RequestedPartNumber`), no description field, and **no documented length
+  limit** on `CustomerReference`, `ReferenceDesignator` or `Notes`.
+- **Bag labels:** nothing official. DigiKey forum posts say the list's
+  customer reference carries into the cart and prints on the label, and
+  that about 48 characters fit. Nothing says the reference designator
+  prints.
+- A list holds up to 1,000 parts (DigiKey blog). No per-request limit is
+  published; parts are sent 50 at a time.
+- What an unknown part number does is undocumented; the read-back has
+  `Flags.IsMatched`.
+
+### Files
+
+- `src/eda_agent/libimport/providers/digikey_lists.py` (new): OAuth, token
+  file, MyLists client, compare-after-add
+- `src/eda_agent/tools/parts.py`: the four tools
+- `src/eda_agent/tools/metadata.py`: three of them marked as writing
+- `tests/test_digikey_lists.py` (new): 32 tests against an in-memory DigiKey
+- `src/eda_agent/libimport/providers/_distributor.py`: fuller error
+  detail
+- `tests/test_altium_no_raise.py`: the four tools set aside, as
+  `part_search` is
+- `docs/PART_SOURCING.md`, `docs/TOOL_REFERENCE.md` (regenerated, 4 lines)
+
+### Test results
+
+- **New tests:** 32 passed.
+- **Tool surface and distributor tests** (21 files): 1,600 passed.
+- The full suite was not rerun.
+
+### Live state
+
+- **Sign-in works.** The owner signed in; a sign-in is on file.
+- **List creation fails.** The owner's `part_list_create` call returned HTTP
+  400 "Error(s) in Parameters." No list was created and nothing has been
+  added or read back.
+- The request matches the published spec: endpoint, headers, `Source`
+  (`external`) and every `ListSettings` field and value. The cause is not
+  known yet. In order of likelihood:
+  1. No `X-DIGIKEY-Account-Id` was sent (`DIGIKEY_ACCOUNT_ID` is unset).
+     The spec calls it optional; forum reports show CreateList answering
+     400 without an account id.
+  2. The server rejects a partial `ListSettings` (no `ColumnPreferences`).
+  3. `Source: "external"` is not open to third-party apps.
+- **Error reporting fixed:** the shared `_error_detail` kept only
+  `ErrorMessage` and dropped `ErrorDetails` and `ValidationErrors`, which
+  is where DigiKey names the field. Both are now reported (400-character
+  cap, credentials still struck out).
+- **Next:** with the owner's approval, retry the creation once unchanged to
+  read the full error; then set `DIGIKEY_ACCOUNT_ID`, or drop the field the
+  error names. The MCP server must be restarted to load the new reporting.
+
+Still unverified against the real service: the creation settings, whether
+creation returns a bare id, the real length limit of the two references,
+and whether DigiKey changes a quantity to a pack multiple.
+
+### Known limitations
+
+- No tool deletes a list, renames it, or edits or removes a part. A test
+  list has to be removed on DigiKey's site.
+- Adding does not merge: the same `sku` added twice is two entries.
+- Designators are not abbreviated into ranges (`R1-R8`), so a line with
+  many of them exceeds what a label fits.
+- One quantity per part. DigiKey's assembly count (`assemblies`) and
+  attrition are not used.
+- DigiKey only; `provider` exists so Mouser can follow.
+- The sandbox host is not supported.
 
 ## Session 3: description in the purchasing BOM
 

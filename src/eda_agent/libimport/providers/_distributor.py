@@ -212,11 +212,22 @@ class DistributorProvider:
         else:
             text = first_string(payload, ("detail",), ("ErrorMessage",),
                                 ("title",))
+            # DigiKey's error model says which input was wrong beside
+            # the message: "Error(s) in Parameters." alone names nothing.
+            more = [first_string(payload, ("ErrorDetails",))]
+            invalid = payload.get("ValidationErrors")
+            for entry in invalid if isinstance(invalid, list) else []:
+                if isinstance(entry, dict):
+                    more.append(": ".join(filter(None, (
+                        first_string(entry, ("Field",)),
+                        first_string(entry, ("Message",))))))
+            text = "; ".join(dict.fromkeys(
+                part for part in [text, *more] if part))
         for var in self.env_vars:
             secret = os.environ.get(var, "").strip()
             if secret:
                 text = text.replace(secret, "***")
-        return " ".join(text.split())[:200]
+        return " ".join(text.split())[:400]
 
     def _reject_error_payload(self, payload: Any) -> None:
         """Refuse an error delivered under a success status code.

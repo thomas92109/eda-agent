@@ -92,6 +92,10 @@ _SET_ASIDE = {
     "lib_extract_intlib": "runs an external extractor",
     "part_search": "reaches distributor networks",
     "part_fetch": "reaches distributor networks",
+    "part_list_login": "reaches DigiKey and writes the sign-in file",
+    "part_list_create": "writes to a DigiKey account",
+    "part_list_add": "writes to a DigiKey account",
+    "part_list_get": "reaches DigiKey",
 }
 _NAMES = sorted(n for n in _TOOLS if n not in _SET_ASIDE)
 
