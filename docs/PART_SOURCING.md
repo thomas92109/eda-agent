@@ -381,6 +381,60 @@ newer file outright ("Unable to load library") though its footprint parser
 accepts it. Any such file comes back with a `*_warning` naming both versions,
 rather than looking like a clean download.
 
+## Planning a purchase from the BOM
+
+Two read-only tools connect the purchasing BOM to the distributors. Neither
+makes a cart or a list; a person reads the plan and then uses
+`part_cart_create` or `part_list_add`.
+
+| Tool | What it does |
+|---|---|
+| `part_purchasing_analyze` | The purchasing BOM, each line with what DigiKey and Mouser offer for its exact part number |
+| `part_purchasing_plan` | A proposal: for each line one distributor, one orderable number, a quantity and a price |
+
+**The BOM.** By default the purchasing BOM of the focused Altium project, as
+`proj_get_bom(mode="purchasing")` builds it: the active variant's fitted
+parts, grouped by Manufacturer and Part Number, with their Description and
+designators. `include_not_fitted` counts the parts the variant leaves off.
+`lines` gives the lines directly instead, and then Altium is not asked.
+`build_quantity` multiplies every line.
+
+**Exact parts only.** A distributor's product is taken for a line only when
+its manufacturer part number is the line's (case and spaces aside) and its
+manufacturer is the line's. A name that begins with the BOM's ("Murata" and
+"Murata Electronics") is accepted and noted; an abbreviation ("TI") is not.
+Otherwise the line is `not_found`, `manufacturer_mismatch` or `ambiguous`,
+with what the distributor does list, and **no other part is ever put in its
+place**.
+
+**The plan.** For each line and each distributor, every packaging is priced
+on its own terms:
+
+- the quantity is the requirement raised to the minimum and then to the
+  multiple; a reel with no stated multiple is sold whole;
+- the price is the break that applies, and with `allow_overbuy` a larger
+  break is taken when the whole line then costs less (the line says what it
+  saves and how many are left over);
+- a Digi-Reel's reeling fee is part of its price;
+- an offer whose stock does not cover the quantity is not chosen.
+
+Each line then goes whole to one distributor: the cheapest (`prefer`
+`lowest`), or the one named (`digikey`, `mouser`), falling back to the other
+with a note when the named one cannot sell it. A line is never split across
+distributors. Prices in two currencies are not compared.
+
+**Nothing is left out.** Every BOM line is in the plan, `planned` or
+`unpurchasable` with the reason; components the BOM could not resolve are
+listed beside it; `complete` is false whenever any part of the board is not
+in the plan. `orders` lists the planned lines per distributor with their full
+designators, ready for a list or a cart. `totals` gives each distributor's
+subtotal and the combined component subtotal. **Shipping, taxes, tariffs and
+fees are not included**; the catalogue APIs do not give them.
+
+Distributor replies come through the cache: each line says whether its
+figures were `cached` and when they were read, and `refresh` reads them
+again.
+
 ## A cart at Mouser
 
 Three tools put parts into a Mouser cart and read it back. A cart is not an

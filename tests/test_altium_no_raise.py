@@ -99,6 +99,8 @@ _SET_ASIDE = {
     "part_cart_create": "writes a cart at Mouser",
     "part_cart_add": "writes a cart at Mouser",
     "part_cart_get": "reaches Mouser",
+    "part_purchasing_analyze": "reaches distributor networks",
+    "part_purchasing_plan": "reaches distributor networks",
 }
 _NAMES = sorted(n for n in _TOOLS if n not in _SET_ASIDE)
 

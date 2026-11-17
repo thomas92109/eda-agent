@@ -9,7 +9,11 @@ from ..units import MM_PER_MIL
 from .option_hints import project_option_collision
 from .datasheet_hints import tag_response
 from .bulk_hints import BulkHintTracker
-from ..export.variant_bom import apply_variant, find_variant
+from ..export.variant_bom import (
+    _KINDS as _VARIATION_KINDS,
+    apply_variant,
+    find_variant,
+)
 from ..export.purchasing_bom import purchasing_bom
 from ..ui import change_order
 from .answering import send_answering
@@ -307,6 +311,108 @@ def _netlist_nodes(pins: list) -> tuple[list[tuple[str, str, str, str]], int]:
             seen.add(row)
             nodes.append(row)
     return nodes, dropped
+
+
+async def purchasing_bom_of_project(
+        bridge, project_path: Optional[str], limit: int,
+        variant: Optional[str],
+        include_not_fitted: bool = False) -> dict[str, Any]:
+    """proj_get_bom's purchasing mode: the BOM a buyer orders from.
+
+    At module level so the purchasing tools read the same BOM the same
+    way. ``include_not_fitted`` counts the parts the variant leaves off
+    the board as if they were fitted; everything else the variant says
+    (alternates, changed parameters) still applies.
+    """
+    scope: dict[str, Any] = {}
+    if project_path:
+        scope["project_path"] = project_path
+    bom = await bridge.send_command_async(
+        "project.get_bom", {"limit": str(limit), **scope})
+    listed = bom.get("components") if isinstance(bom, dict) else None
+    if not isinstance(listed, list):
+        return {"ok": False, "reason": "the project's components could "
+                "not be read", "bom_reply": bom}
+
+    # The variant is settled before anything is counted: a BOM built
+    # for the wrong variant has wrong quantities and looks right.
+    wanted, source = (variant or "").strip(), "requested"
+    if not wanted:
+        active = await bridge.send_command_async(
+            "project.get_active_variant", scope)
+        wanted = str(active.get("name") or "").strip() \
+            if isinstance(active, dict) else ""
+        source = "active"
+        if not wanted:
+            return {"ok": False, "reason": "the project's active variant "
+                    "could not be read, so which parts are fitted is not "
+                    "known. Name one with variant=, or pass "
+                    f"variant='{_NO_VARIANT}' for the base design.",
+                    "active_variant_reply": active}
+    chosen = None
+    if wanted.upper() != _NO_VARIANT.upper():
+        listing = await bridge.send_command_async(
+            "project.get_variants", scope, timeout=120.0)
+        variants = listing.get("variants") \
+            if isinstance(listing, dict) else None
+        if not isinstance(variants, list):
+            return {"ok": False, "reason": "the project's variants could "
+                    "not be read", "variants_reply": listing}
+        chosen = find_variant(variants, wanted)
+        if chosen is None:
+            return {"ok": False, "reason": f"no variant named {wanted!r}",
+                    "variants": [v.get("name") for v in variants]}
+
+    # The BOM lists what is placed; the parameters come from the
+    # schematic components, read without pins or nets.
+    names = [str(c.get("designator", "")) for c in listed
+             if isinstance(c, dict)]
+    parameters: dict[str, Any] = {}
+    for start in range(0, len(names), _PARAMETER_BATCH):
+        batch = [n for n in names[start:start + _PARAMETER_BATCH] if n]
+        if not batch:
+            continue
+        info = await bridge.send_command_async(
+            "project.get_component_info_batch",
+            {"designators": "~~".join(batch), "with_pin_nets": "false",
+             **scope}, timeout=120.0)
+        for comp in (info.get("components") or []) \
+                if isinstance(info, dict) else []:
+            if isinstance(comp, dict) \
+                    and isinstance(comp.get("parameters"), dict):
+                parameters[str(comp.get("designator", ""))] = \
+                    comp["parameters"]
+    components = [{"designator": str(c.get("designator", "")),
+                   "footprint": c.get("footprint", ""),
+                   "parameters": parameters.get(str(c.get("designator", "")))}
+                  for c in listed if isinstance(c, dict)]
+
+    if include_not_fitted and chosen is not None:
+        chosen = {**chosen, "variations": [
+            entry for entry in chosen.get("variations") or []
+            if _VARIATION_KINDS.get(
+                str(entry.get("kind", "")).strip().lower()) != "not_fitted"]}
+    result = purchasing_bom(components, chosen)
+    truncated = bool(bom.get("limit_hit"))
+    skipped = int(bom.get("skipped_nil") or 0) \
+        + sum(1 for c in listed if not isinstance(c, dict))
+    summary = {
+        "variant": chosen.get("name", wanted) if chosen else _NO_VARIANT,
+        "variant_source": source,
+        **({"not_fitted_included": True} if include_not_fitted else {}),
+        **result.pop("counts"),
+        "complete": not truncated and not skipped,
+        "truncated": truncated,
+    }
+    if truncated:
+        summary["incomplete_reason"] = (
+            f"stopped at limit={limit} with components left over; "
+            "quantities are short. Raise limit.")
+    elif skipped:
+        summary["incomplete_reason"] = (
+            f"{skipped} object(s) of the project came back empty from "
+            "Altium and are not counted")
+    return {"mode": "purchasing", "summary": summary, **result}
 
 
 def register_project_tools(mcp):
@@ -1154,93 +1260,6 @@ def register_project_tools(mcp):
                            f"{' / '.join(keys)}; JLC leaves them unplaced")
         return out
 
-    async def _purchasing_bom(bridge, project_path: Optional[str], limit: int,
-                              variant: Optional[str]) -> dict[str, Any]:
-        """proj_get_bom's purchasing mode: the BOM a buyer orders from."""
-        scope: dict[str, Any] = {}
-        if project_path:
-            scope["project_path"] = project_path
-        bom = await bridge.send_command_async(
-            "project.get_bom", {"limit": str(limit), **scope})
-        listed = bom.get("components") if isinstance(bom, dict) else None
-        if not isinstance(listed, list):
-            return {"ok": False, "reason": "the project's components could "
-                    "not be read", "bom_reply": bom}
-
-        # The variant is settled before anything is counted: a BOM built
-        # for the wrong variant has wrong quantities and looks right.
-        wanted, source = (variant or "").strip(), "requested"
-        if not wanted:
-            active = await bridge.send_command_async(
-                "project.get_active_variant", scope)
-            wanted = str(active.get("name") or "").strip() \
-                if isinstance(active, dict) else ""
-            source = "active"
-            if not wanted:
-                return {"ok": False, "reason": "the project's active variant "
-                        "could not be read, so which parts are fitted is not "
-                        "known. Name one with variant=, or pass "
-                        f"variant='{_NO_VARIANT}' for the base design.",
-                        "active_variant_reply": active}
-        chosen = None
-        if wanted.upper() != _NO_VARIANT.upper():
-            listing = await bridge.send_command_async(
-                "project.get_variants", scope, timeout=120.0)
-            variants = listing.get("variants") \
-                if isinstance(listing, dict) else None
-            if not isinstance(variants, list):
-                return {"ok": False, "reason": "the project's variants could "
-                        "not be read", "variants_reply": listing}
-            chosen = find_variant(variants, wanted)
-            if chosen is None:
-                return {"ok": False, "reason": f"no variant named {wanted!r}",
-                        "variants": [v.get("name") for v in variants]}
-
-        # The BOM lists what is placed; the parameters come from the
-        # schematic components, read without pins or nets.
-        names = [str(c.get("designator", "")) for c in listed
-                 if isinstance(c, dict)]
-        parameters: dict[str, Any] = {}
-        for start in range(0, len(names), _PARAMETER_BATCH):
-            batch = [n for n in names[start:start + _PARAMETER_BATCH] if n]
-            if not batch:
-                continue
-            info = await bridge.send_command_async(
-                "project.get_component_info_batch",
-                {"designators": "~~".join(batch), "with_pin_nets": "false",
-                 **scope}, timeout=120.0)
-            for comp in (info.get("components") or []) \
-                    if isinstance(info, dict) else []:
-                if isinstance(comp, dict) \
-                        and isinstance(comp.get("parameters"), dict):
-                    parameters[str(comp.get("designator", ""))] = \
-                        comp["parameters"]
-        components = [{"designator": str(c.get("designator", "")),
-                       "footprint": c.get("footprint", ""),
-                       "parameters": parameters.get(str(c.get("designator", "")))}
-                      for c in listed if isinstance(c, dict)]
-
-        result = purchasing_bom(components, chosen)
-        truncated = bool(bom.get("limit_hit"))
-        skipped = int(bom.get("skipped_nil") or 0) \
-            + sum(1 for c in listed if not isinstance(c, dict))
-        summary = {
-            "variant": chosen.get("name", wanted) if chosen else _NO_VARIANT,
-            "variant_source": source,
-            **result.pop("counts"),
-            "complete": not truncated and not skipped,
-            "truncated": truncated,
-        }
-        if truncated:
-            summary["incomplete_reason"] = (
-                f"stopped at limit={limit} with components left over; "
-                "quantities are short. Raise limit.")
-        elif skipped:
-            summary["incomplete_reason"] = (
-                f"{skipped} object(s) of the project came back empty from "
-                "Altium and are not counted")
-        return {"mode": "purchasing", "summary": summary, **result}
-
     @mcp.tool()
     async def proj_get_bom(
         project_path: Optional[str] = None,
@@ -1309,7 +1328,8 @@ def register_project_tools(mcp):
         bridge = get_bridge()
         wanted_mode = str(mode or "full").strip().lower()
         if wanted_mode == "purchasing":
-            return await _purchasing_bom(bridge, project_path, limit, variant)
+            return await purchasing_bom_of_project(
+                bridge, project_path, limit, variant)
         if wanted_mode != "full":
             return {"ok": False, "reason": f"no BOM mode {mode!r}; mode is "
                     "'full' or 'purchasing'"}
