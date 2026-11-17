@@ -135,6 +135,46 @@ formatted text, it is read when it can mean one thing (`0,285 €`, `$9,999.99`)
 and otherwise kept as `price_text` with a `null` price: `1.234` is one and a
 bit in one locale and over a thousand in another.
 
+## The purchasing BOM of an Altium project
+
+`proj_get_bom` with `mode="purchasing"` returns the BOM to order from: what to
+search the distributors for, and how many. It reads two schematic parameters
+from every placed component, `Manufacturer` and `Part Number` (names matched
+ignoring case), and nothing else stands in for them: not the comment, the
+description, the library reference or a supplier number. The reply carries no
+pins or nets; on a 393-part board it came to 18 KB where the full BOM is
+over 100 KB.
+
+| Field | What it is |
+|---|---|
+| `summary` | `variant` and `variant_source`, the counts, `complete` and `truncated` |
+| `lines` | One per manufacturer and part number: `manufacturer`, `part_number`, `quantity`, `designators`, `footprints` |
+| `unresolved` | Fitted components that cannot be ordered as they stand: `designator`, `manufacturer`, `part_number`, `footprint`, `reason` |
+| `not_fitted` | Designators the variant leaves off the board |
+| `not_in_bom` | Fitted designators whose Component Kind keeps them out of the BOM (`Standard (No BOM)`, `Net Tie`, `Graphical`) |
+| `inconsistencies` | Things to look at before ordering, none of them merged away silently |
+
+Every placed component is in exactly one of `lines`, `unresolved`, `not_fitted`
+and `not_in_bom`, so the counts in `summary` add up to `components`.
+
+**The variant.** It builds the project's active variant unless `variant` names
+one; `variant="[No Variations]"` is the base design. A not-fitted part is left
+out and listed. A variant's own values for the two parameters replace the base
+ones. An alternate part is ordered only when its variant entry states both
+parameters, because the base part's manufacturer and number are not the
+alternate's; otherwise it is `unresolved`. If the active variant cannot be
+read the call is refused: a BOM for the wrong variant has wrong quantities and
+looks right.
+
+**Nothing is guessed.** A component with a parameter missing, empty, or holding
+a placeholder (`N.A`, `TBD`, `-`) is `unresolved` with the reason. One part
+number under two manufacturers stays two lines. A manufacturer spelled two ways
+(`YAGEO`, `Yageo`) is one line, and the spellings are reported.
+
+**`complete` false means do not order from it.** It is false when the read
+stopped at `limit` with components left over (`truncated`), or when Altium
+returned part of the project empty; `incomplete_reason` says which.
+
 **Access policy of the hosts, checked rather than assumed.** Every host these
 providers reach was checked for a `robots.txt` before anything was built
 against it. That check changed the design once: `gitlab.com/robots.txt` carries
