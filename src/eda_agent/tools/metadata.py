@@ -285,6 +285,10 @@ INTERACTION_OVERRIDES = {
     "part_list_login": SILENT,
     "part_list_create": SILENT,
     "part_list_add": SILENT,
+    # These write a cart at Mouser. part_cart_get only reads and stays
+    # readonly.
+    "part_cart_create": SILENT,
+    "part_cart_add": SILENT,
     # Writes the downloaded PDF and its sidecar into the workspace cache.
     # Filed under parts, which is offline and so falls back to READONLY;
     # a tool that writes files is SILENT here, as part_fetch is.

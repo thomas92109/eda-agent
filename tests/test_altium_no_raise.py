@@ -96,6 +96,9 @@ _SET_ASIDE = {
     "part_list_create": "writes to a DigiKey account",
     "part_list_add": "writes to a DigiKey account",
     "part_list_get": "reaches DigiKey",
+    "part_cart_create": "writes a cart at Mouser",
+    "part_cart_add": "writes a cart at Mouser",
+    "part_cart_get": "reaches Mouser",
 }
 _NAMES = sorted(n for n in _TOOLS if n not in _SET_ASIDE)
 

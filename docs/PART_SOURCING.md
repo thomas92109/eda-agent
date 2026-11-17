@@ -135,6 +135,47 @@ formatted text, it is read when it can mean one thing (`0,285 €`, `$9,999.99`)
 and otherwise kept as `price_text` with a `null` price: `1.234` is one and a
 bit in one locale and over a thousand in another.
 
+### The cache of distributor replies
+
+DigiKey and Mouser each allow about 1,000 calls a day, and a BOM asks about
+the same parts repeatedly. Replies to their read-only catalogue calls are
+kept in one SQLite file, `%LOCALAPPDATA%\eda-agent\distributor-cache.sqlite3`
+(`EDA_AGENT_DISTRIBUTOR_CACHE_FILE` moves it), and reused:
+
+| What a reply contains | Kept for |
+|---|---|
+| Product information only | 30 days |
+| Search results | 24 hours |
+| Pricing or availability | 4 hours |
+
+A reply holding several of these is kept for the shortest. Both distributors
+send prices and stock with every product, so in practice an entry lasts 4
+hours. A hit built from a kept reply says so: `sourcing.cache` is
+`{hit, fetched_at, expires_at}`, `retrieved_at` is when it was really read,
+and `freshness` starts with `cached:`. A reply read from the distributor is
+exactly as it was before the cache existed.
+
+- `part_search` and `part_fetch` take `refresh=true` to ask the distributor
+  again; the new reply replaces the kept one.
+- `EDA_AGENT_DISTRIBUTOR_CACHE=0` turns the cache off.
+- Entries are kept apart by distributor, endpoint, every request parameter,
+  DigiKey's locale settings and the account, which is told apart by a short
+  one-way fingerprint of the key. No key, secret or token is written.
+- Never kept: a failed call, an error under HTTP 200, a reply of the wrong
+  shape, an exact Mouser lookup that found nothing, a token exchange, and
+  anything to do with a cart or a saved list.
+- The check made before a part goes into a Mouser cart or a DigiKey list
+  always asks the distributor, whatever is kept.
+- If the file cannot be opened, read or written, the call goes to the
+  distributor as if there were no cache.
+
+`python -m eda_agent.libimport.providers._cache stats` shows what is kept;
+`... clear` (optionally `digikey` or `mouser`) empties it.
+
+The database itself (its one table, how a cache key is made, what happens on
+a database error, and queries for looking inside it) is described in
+[DISTRIBUTOR_CACHE_SCHEMA.md](DISTRIBUTOR_CACHE_SCHEMA.md).
+
 ## The purchasing BOM of an Altium project
 
 `proj_get_bom` with `mode="purchasing"` returns the BOM to order from: what to
@@ -339,6 +380,57 @@ while KiCad 10.0.1 writes `20251024`, and KiCad's symbol parser refuses the
 newer file outright ("Unable to load library") though its footprint parser
 accepts it. Any such file comes back with a `*_warning` naming both versions,
 rather than looking like a clean download.
+
+## A cart at Mouser
+
+Three tools put parts into a Mouser cart and read it back. A cart is not an
+order: nothing here touches Mouser's Order API, a payment or a checkout, and
+the cart is bought, if ever, by a person on Mouser's site.
+
+| Tool | What it does |
+|---|---|
+| `part_cart_create` | Makes a new cart holding the given parts, and returns its `cart_key` |
+| `part_cart_add` | Adds parts to the cart a `cart_key` names; without a key it does nothing |
+| `part_cart_get` | Reads a cart by its `cart_key` |
+
+They need `MOUSER_CART_API_KEY`, the key of Mouser's Cart and Order API. It
+is a different key from the Search API's `MOUSER_API_KEY`. The `cart_key` is
+the only way back to a cart, so keep it.
+
+**What a cart line can hold** is what Mouser's API description gives it, four
+fields and no others:
+
+| Item field | Sent as | Limit |
+|---|---|---|
+| `sku` | `MouserPartNumber` | The exact Mouser part number, at most 80 characters |
+| `quantity` | `Quantity` | A whole number, 1 or more |
+| `customer_part_number` | `CustomerPartNumber` | Optional. At most 21 characters, no `*`; longer is refused, not shortened |
+| `packaging` | `PackagingChoice` | Optional. `None`, `Cut_Tape`, `MouseReel` or `FullReel` |
+
+**Mouser's cart has no field for reference designators, a description or a
+note.** An item may carry `designators`, `description`, `manufacturer` and
+`manufacturer_part_number`; they come back with the item in the result and
+are never sent. When the last two are given they are compared with the part
+Mouser put in the cart.
+
+**Bad input makes no cart.** A malformed item, or the same `sku` twice,
+refuses the whole call. With `check_products` (the default, one Search API
+read per `sku`) so does a `sku` that is not a Mouser part number, or a
+quantity below the part's minimum or off its multiple. A quantity is never
+rounded here.
+
+**What comes back.** After the insert the cart is read again by its key, and
+each item is reported beside its `cart_line`: Mouser's part number,
+manufacturer, manufacturer part number, quantity, customer part number,
+packaging, prices, stock, minimum and multiple. `differences` is empty, and
+`verified` true, when the cart holds what was asked. A part that was already
+in the cart is not replaced; the item says what the line held before and
+holds now.
+
+Run live on 2026-11-16 with one part: the part number, quantity and customer
+part number came back as sent, and Mouser chose `Cut_Tape` when no packaging
+was asked for. What Mouser does with a quantity it does not accept, and with
+a part number already in the cart, has not been seen live.
 
 ## Getting a KiCad-format part into Altium
 

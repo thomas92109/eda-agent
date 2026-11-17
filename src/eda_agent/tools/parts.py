@@ -62,6 +62,7 @@ def register_parts_tools(mcp):
     async def part_search(
         query: str = "",
         limit_per_provider: int = 20,
+        refresh: bool = False,
     ) -> dict[str, Any]:
         """Search EVERY enabled part provider and merge the results.
 
@@ -82,7 +83,10 @@ def register_parts_tools(mcp):
         and ``price_breaks`` ({quantity, unit_price}). null means the
         distributor did not say: a null status is not "active".
         ``freshness`` says how current the figures are; a search can
-        lag, part_fetch reads live. Search by MPN, keyword or
+        lag. digikey and mouser replies are reused from a local cache
+        for up to 4 hours (``sourcing.cache`` and ``retrieved_at`` then
+        say when they were read); ``refresh=True`` asks the
+        distributor again. Search by MPN, keyword or
         distributor number. Two products sharing an MPN (two makers)
         get distinct refs, by distributor number instead of MPN.
 
@@ -137,7 +141,10 @@ def register_parts_tools(mcp):
                          "EDA_AGENT_PART_PROVIDERS."),
             }
 
-        result = search_all(query, limit_per_provider)
+        from eda_agent.libimport.providers import _cache
+
+        with _cache.fresh(refresh):
+            result = search_all(query, limit_per_provider)
         result["ok"] = True
         if not result["count"]:
             # Distinguish "everything answered and found nothing" from
@@ -156,6 +163,7 @@ def register_parts_tools(mcp):
         part_id: str,
         provider: str = "",
         download_dir: str = "",
+        refresh: bool = False,
     ) -> dict[str, Any]:
         """Fetch one part's detail, by the ``ref`` a search returned.
 
@@ -164,8 +172,10 @@ def register_parts_tools(mcp):
         guessed; ``provider`` wins over a prefix.
 
         For digikey and mouser the id is an MPN or a ``distributor_pn``
-        from ``sourcing.offers``, and ``detail.sourcing`` holds the live
-        stock, lifecycle and price breaks (see part_search). An MPN
+        from ``sourcing.offers``, and ``detail.sourcing`` holds the
+        stock, lifecycle and price breaks (see part_search), read live
+        or reused from the cache for up to 4 hours: ``retrieved_at``
+        says when, and ``refresh=True`` reads live. An MPN
         that names several products there is never resolved to one:
         the reply is {"ok": False, "ambiguous": True, "candidates"},
         each candidate with its ``ref``, manufacturer and distributor
@@ -217,8 +227,11 @@ def register_parts_tools(mcp):
         except ProviderError as exc:
             return {"ok": False, "reason": str(exc)}
 
+        from eda_agent.libimport.providers import _cache
+
         try:
-            detail = source.fetch(part_id)
+            with _cache.fresh(refresh):
+                detail = source.fetch(part_id)
         except ProviderUnavailable as exc:
             return {"ok": False, "unavailable": str(exc),
                     "provider": source.name}
@@ -461,3 +474,118 @@ def register_parts_tools(mcp):
             return lists.all_lists()
 
         return _list_call(provider, work)
+
+    def _cart_call(provider: str, work) -> dict[str, Any]:
+        """Run ``work`` on the cart client and word its failures."""
+        from eda_agent.libimport.providers import (
+            ProviderError,
+            ProviderUnavailable,
+        )
+        from eda_agent.libimport.providers.mouser_cart import (
+            CartInputError,
+            MouserCart,
+        )
+
+        if str(provider or "").strip().lower() != "mouser":
+            return {"ok": False, "reason": (
+                f"no cart support for {provider!r}; only mouser has it. "
+                "DigiKey has saved lists instead: part_list_create")}
+        try:
+            return {"ok": True, "provider": "mouser", **work(MouserCart())}
+        except CartInputError as exc:
+            out = {"ok": False, "reason": str(exc), "provider": "mouser"}
+            if exc.problems:
+                out["problems"] = exc.problems
+            return out
+        except ProviderUnavailable as exc:
+            return {"ok": False, "unavailable": str(exc),
+                    "provider": "mouser"}
+        except ProviderError as exc:
+            return {"ok": False, "reason": str(exc), "provider": "mouser"}
+
+    @mcp.tool()
+    async def part_cart_create(
+        items: list[dict[str, Any]],
+        check_products: bool = True,
+        provider: str = "mouser",
+    ) -> dict[str, Any]:
+        """Create a NEW Mouser cart holding the given parts.
+
+        WRITES TO MOUSER: makes a cart only when the user asked for
+        one. It is a cart, not an order: nothing here checks out, pays
+        or submits, and no tool in this server can.
+
+        Each item: ``sku`` (the exact Mouser part number, a
+        ``distributor_pn`` from part_search; a manufacturer number is
+        refused) and ``quantity`` (whole, 1 or more; never rounded
+        here). Optional: ``customer_part_number`` (at most 21
+        characters, no ``*``; refused when longer, not shortened) and
+        ``packaging`` (None, Cut_Tape, MouseReel or FullReel).
+
+        Mouser's cart has NO field for reference designators, a
+        description or a note. ``designators``, ``description``,
+        ``manufacturer`` and ``manufacturer_part_number`` are accepted
+        and returned with each item, and are not sent. When given, the
+        last two are compared with the part Mouser put in the cart.
+
+        Refused whole, with nothing sent and no cart made, when an
+        item is malformed, a ``sku`` appears twice, or
+        (``check_products``, one catalogue read per sku, needs
+        MOUSER_API_KEY) a ``sku`` is not a Mouser part number or its
+        quantity is below the minimum or off the multiple.
+
+        Returns:
+            {"ok", "cart_key", "created", "sent", "added", "verified",
+            "items", "cart"}. Keep ``cart_key``: it is the only way
+            back to the cart. Each item has what was asked,
+            ``cart_line`` (Mouser's part, quantity, prices, minimum
+            and multiple as read back), ``differences`` and
+            ``verified``. Needs MOUSER_CART_API_KEY.
+        """
+        return _cart_call(provider, lambda cart: cart.create_cart(
+            items, check_products=check_products))
+
+    @mcp.tool()
+    async def part_cart_add(
+        cart_key: str,
+        items: list[dict[str, Any]],
+        check_products: bool = True,
+        provider: str = "mouser",
+    ) -> dict[str, Any]:
+        """Add parts to the Mouser cart that ``cart_key`` names.
+
+        WRITES TO MOUSER. Adds to that cart and orders nothing.
+        ``cart_key`` is required, from part_cart_create or the user;
+        without one nothing is sent and no cart is made. Never guess a
+        key or reuse one from another task: it would change someone
+        else's cart.
+
+        ``items`` and ``check_products`` are as for part_cart_create.
+        A part already in the cart is not replaced: the reply says
+        what the line held before and holds now.
+
+        Returns:
+            As part_cart_create, with ``created`` false.
+        """
+        return _cart_call(provider, lambda cart: cart.add_items(
+            cart_key, items, check_products=check_products))
+
+    @mcp.tool()
+    async def part_cart_get(
+        cart_key: str,
+        provider: str = "mouser",
+    ) -> dict[str, Any]:
+        """Read a Mouser cart by its ``cart_key``. Reads only.
+
+        Returns:
+            {"ok", "cart_key", "currency", "merchandise_total",
+            "total_item_count", "count", "items", "errors"}. Each item
+            has ``sku`` (the Mouser part number), ``manufacturer``,
+            ``manufacturer_part_number``, ``mouser_description``,
+            ``quantity``, ``customer_part_number``, ``packaging``,
+            ``unit_price``, ``extended_price``, ``stock``, ``moq``,
+            ``multiple``, ``maximum``, ``messages`` and ``errors``.
+            Reference designators are not in a Mouser cart. Needs
+            MOUSER_CART_API_KEY.
+        """
+        return _cart_call(provider, lambda cart: cart.get_cart(cart_key))

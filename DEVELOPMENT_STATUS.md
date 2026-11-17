@@ -9,7 +9,7 @@ out of any pull request meant for upstream.
 - Repository: `C:\Projects\eda-agent`, branch `feature/distributor-pricing`,
   tracking `origin` (the fork). `upstream` is the original project; nothing
   is pushed there.
-- Five commits sit on top of `e5f3469` (`upstream/main`, version 0.8.2):
+- Six commits sit on top of `e5f3469` (`upstream/main`, version 0.8.2):
   1. `f7b5769` "Add DigiKey and Mouser sourcing improvements" (session 1).
   2. `120e1f6` "Add compact purchasing BOM support" (session 2), pushed to
      `origin`.
@@ -17,9 +17,93 @@ out of any pull request meant for upstream.
      `origin`.
   4. `5993b76` "Add DigiKey MyLists integration" (session 4), pushed to
      `origin`.
-  5. "Fix DigiKey MyLists list creation and verify it live" (session 5),
+  5. `b6746b0` "Fix DigiKey MyLists list creation and verify it live"
+     (session 5), pushed to `origin`.
+  6. "Add Mouser cart integration and distributor API caching" (session 6),
      pushed to `origin`.
 - No pull request has been opened.
+
+## Session 6: Mouser cart and the distributor cache
+
+Both pieces are in one commit on top of `b6746b0`, pushed to `origin`.
+
+### Mouser cart
+
+Three tools, `part_cart_create`, `part_cart_add` and `part_cart_get`, in
+`src/eda_agent/libimport/providers/mouser_cart.py`. They use
+`MOUSER_CART_API_KEY`, which is not the Search API key. Scope is the cart
+only: nothing touches Mouser's Order API, a payment or a checkout.
+
+- A cart line has four fields in Mouser's API description:
+  `MouserPartNumber`, `Quantity`, `CustomerPartNumber` (21 characters, no
+  `*`) and `PackagingChoice`. **There is no field for reference designators
+  or notes.** Designators, description, manufacturer and MPN are returned
+  with each item and never sent.
+- Before an insert each `sku` is read from the Search API: it must be a
+  Mouser part number exactly, and the quantity must meet its minimum and
+  multiple. Nothing is rounded.
+- After an insert the cart is read back by its key and each item is
+  compared. `part_cart_add` needs an explicit `cart_key` and never makes a
+  cart.
+- **Live, 2026-11-16:** one cart, one part (a 10 kΩ 0603 resistor, quantity
+  10, an 18-character customer part number). Created on the first attempt
+  with an empty `CartKey`; part number, quantity, customer part number,
+  manufacturer and MPN came back as sent; Mouser chose `Cut_Tape` when no
+  packaging was asked for. The test cart was left in place.
+- Not seen live: what Mouser does with a quantity it does not accept, and
+  with a part number already in the cart. No tool removes a line.
+- Tests: `tests/test_mouser_cart.py`, 25.
+
+### Distributor cache
+
+DigiKey and Mouser catalogue replies are kept in one SQLite file,
+`%LOCALAPPDATA%\eda-agent\distributor-cache.sqlite3`, by
+`src/eda_agent/libimport/providers/_cache.py`. The schema, the key and the
+lifecycle are in `docs/DISTRIBUTOR_CACHE_SCHEMA.md`.
+
+- **Where it sits:** around the raw reply in `DigiKeyProvider._read` (keyword
+  search and product details) and `MouserProvider._post` (keyword and
+  part-number search). Nothing else goes through it: not the token exchange,
+  not MyLists, not the cart.
+- **One table, `responses`:** key, distributor, endpoint, request, context,
+  kinds, response, fetched_at, expires_at. WAL, 5 s busy timeout, one
+  connection per operation, `user_version` 1. A file of another version is
+  emptied, not migrated.
+- **Key:** SHA-256 of distributor, endpoint without its query, the request as
+  sorted JSON, and a context holding DigiKey's locale settings and a 16-hex
+  fingerprint of the credential. No credential is stored.
+- **Lifetime by content:** product 30 days, search 24 hours, pricing or
+  availability 4 hours, shortest wins. Every real reply carries prices, so
+  rows last 4 hours.
+- **Forced fresh:** `part_search` and `part_fetch` take `refresh`. The checks
+  before a cart insert and a list add always read live
+  (`_cache.fresh()`).
+- **`part_fetch` is no longer always live.** It reuses a reply for up to 4
+  hours; a reused hit has `sourcing.cache` and a `freshness` starting with
+  `cached:`.
+- **Failure:** any SQLite or file error is a miss; the distributor is called.
+- **Tests never use the real file:** an autouse fixture in
+  `tests/conftest.py` turns the cache off and points its file into the
+  test's temporary folder. `tests/test_distributor_cache.py` turns it on for
+  itself.
+- **Schema document is tested:** `tests/test_distributor_cache_schema_doc.py`
+  compares the page's DDL, column and index tables, version, settings and
+  lifetimes with a database the code creates, and runs every query on it.
+- **Live, 2026-11-16:** one part at each distributor through `part_fetch`:
+  first lookup 1 call (DigiKey 2, with the token), repeat 0 calls,
+  `refresh=true` 1 call, repeat 0 calls. The file held no key, secret or
+  token.
+- Tests: 59 in `test_distributor_cache.py`, 7 in the schema test; 947 passed
+  with the related distributor, cart, list and tool-surface tests. The full
+  suite was not run.
+
+### Open
+
+- Reconnect the altium MCP server to load both.
+- DigiKey part numbers are keyed as written, so letter case makes separate
+  rows.
+- Expired rows go only when something is written; there is no size limit.
+- The purchasing BOM does not call the distributors yet.
 
 ## Session 5: DigiKey MyLists works live (create, add, read back)
 
@@ -519,9 +603,10 @@ the `distributor_pn`, not the ref.
 ## Next steps for the next session
 
 1. Run `git status` and `git log --oneline -5`; confirm the branch is
-   `feature/distributor-pricing` with the five commits above and a clean
+   `feature/distributor-pricing` with the six commits above and a clean
    tree. For DigiKey MyLists, start from "Remaining limitations" under
-   session 5.
+   session 5; for the Mouser cart and the cache, from "Open" under
+   session 6.
 2. Restart the altium MCP server so it loads the purchasing BOM code (reconnect
    it with `/mcp`, or restart Claude Code).
 3. Call `proj_get_bom` with `mode="purchasing"` and the SensorBoard project

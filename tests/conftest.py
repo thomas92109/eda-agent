@@ -248,6 +248,21 @@ def _no_usage_records(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_distributor_cache(monkeypatch, tmp_path):
+    """Tests never read or write the user's distributor cache.
+
+    DigiKey and Mouser replies are kept in a SQLite file in the user's
+    profile. With it on, a test's made-up reply would land there and the
+    next test, or the next real search, would be answered from it. So it
+    is off, and its file points into the test's own folder in case a
+    test turns it on. A test of the cache turns it on for itself.
+    """
+    monkeypatch.setenv("EDA_AGENT_DISTRIBUTOR_CACHE", "0")
+    monkeypatch.setenv("EDA_AGENT_DISTRIBUTOR_CACHE_FILE",
+                       str(tmp_path / "distributor-cache.sqlite3"))
+
+
+@pytest.fixture(autouse=True)
 def _restore_active_backend():
     """Undo any backend a test registers, so the next one starts clean.
 

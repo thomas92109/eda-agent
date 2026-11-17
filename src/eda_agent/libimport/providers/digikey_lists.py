@@ -726,6 +726,8 @@ class DigiKeyLists(DistributorProvider):
             DigiKeyProvider,
         )
 
+        from eda_agent.libimport.providers import _cache
+
         catalogue = DigiKeyProvider()
         verdict: dict[str, str] = {}
         for entry in ready:
@@ -733,7 +735,10 @@ class DigiKeyLists(DistributorProvider):
             if key in verdict:
                 continue
             try:
-                hit = catalogue._details(entry["sku"])
+                # Asked of DigiKey now, never answered from the cache:
+                # this decides what goes into the account.
+                with _cache.fresh():
+                    hit = catalogue._details(entry["sku"])
             except ProviderUnavailable:
                 raise
             except ProviderError as exc:

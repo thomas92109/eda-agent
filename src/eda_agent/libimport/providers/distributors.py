@@ -43,6 +43,7 @@ import time
 import urllib.parse
 from typing import Any
 
+from eda_agent.libimport.providers import _cache
 from eda_agent.libimport.providers._distributor import (
     DistributorProvider,
     first_string,
@@ -75,6 +76,72 @@ def _dicts(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [entry for entry in value if isinstance(entry, dict)]
+
+
+def _priced(entries: list[dict[str, Any]], *fields: str) -> bool:
+    """Whether any entry states a price or a stock figure."""
+    return any(entry.get(field) not in (None, "", [])
+               for entry in entries for field in fields)
+
+
+def _digikey_kinds(search: bool, reply: Any):
+    """What a Product Information reply contains, for the cache; None
+    for one that is not to be kept."""
+    if not isinstance(reply, dict):
+        return None
+    if search:
+        listed = [reply.get(key) for key in ("ExactMatches", "Products",
+                                             "products")]
+        if not any(isinstance(entry, list) for entry in listed):
+            return None
+        products = [p for entry in listed for p in _dicts(entry)]
+        kinds = [_cache.SEARCH]
+    else:
+        if not isinstance(reply.get("Product"), dict):
+            return None
+        products = [reply["Product"]]
+        kinds = [_cache.PRODUCT]
+    variations = [v for p in products
+                  for v in _dicts(p.get("ProductVariations"))]
+    if _priced(products, "QuantityAvailable", "UnitPrice") or _priced(
+            variations, "StandardPricing", "MyPricing",
+            "QuantityAvailableforPackageType"):
+        kinds.append(_cache.PRICING)
+    return kinds
+
+
+def _mouser_kinds(keyword: bool, reply: Any):
+    """What a Search API reply contains, for the cache; None for one
+    that is not to be kept. An exact lookup that found nothing is not
+    kept: "no such part" should not outlive the part's arrival."""
+    results = reply.get("SearchResults") if isinstance(reply, dict) else None
+    if not isinstance(results, dict) \
+            or not isinstance(results.get("Parts"), list):
+        return None
+    parts = _dicts(results["Parts"])
+    if not parts and not keyword:
+        return None
+    kinds = [_cache.SEARCH if keyword else _cache.PRODUCT]
+    if _priced(parts, "PriceBreaks", "AvailabilityInStock", "Availability",
+               "AvailabilityOnOrder", "FactoryStock"):
+        kinds.append(_cache.PRICING)
+    return kinds
+
+
+def _from_cache(hits: list, held: Any) -> list:
+    """Mark hits built from a held reply with when it was really read."""
+    if held:
+        for hit in hits:
+            sourcing = getattr(hit, "sourcing", None)
+            if not isinstance(sourcing, dict):
+                continue
+            sourcing["retrieved_at"] = held["fetched_at"]
+            sourcing["freshness"] = (
+                f"cached: read at {held['fetched_at']} and reused until "
+                f"{held['expires_at']}; refresh reads it again. As read "
+                f"then: {sourcing.get('freshness')}")
+            sourcing["cache"] = {"hit": True, **held}
+    return hits
 
 
 #: DigiKey access tokens by client id, with the time each stops being
@@ -274,12 +341,31 @@ class DigiKeyProvider(DistributorProvider):
             sourcing=sourcing,
         )
 
+    def _read(self, url: str, body: dict[str, Any] | None,
+              search: bool) -> tuple[Any, Any]:
+        """``_api`` through the cache: the reply, and when it was read
+        if it was held. The locale and the account are part of the key,
+        because both change the prices."""
+        import os
+
+        creds = self._credentials()
+        context = {
+            "account": _cache.account_fingerprint(
+                creds["DIGIKEY_CLIENT_ID"]),
+            "locale": {var: os.environ.get(var, "").strip().upper()
+                       for var, _ in self._LOCALE_HEADERS},
+        }
+        return _cache.cached_call(
+            self.name, url, body or {}, context,
+            lambda: self._api(url, body),
+            kinds=lambda reply: _digikey_kinds(search, reply))
+
     def search(self, query: str, limit: int = 20) -> list[PartHit]:
-        payload = self._api(self._SEARCH_URL, {
+        payload, held = self._read(self._SEARCH_URL, {
             "Keywords": str(query),
             "Limit": int(limit),
             "Offset": 0,
-        })
+        }, search=True)
         if not isinstance(payload, dict):
             return []
         locale = payload.get("SearchLocaleUsed")
@@ -299,15 +385,17 @@ class DigiKeyProvider(DistributorProvider):
                 continue
             seen.add(key)
             hits.append(hit)
-        return self._distinct_ids(hits[:limit])
+        return self._distinct_ids(_from_cache(hits[:limit], held))
 
     def _details(self, number: str) -> PartHit | None:
-        payload = self._api(self._DETAILS_URL.format(
-            number=urllib.parse.quote(str(number), safe="")))
+        payload, held = self._read(self._DETAILS_URL.format(
+            number=urllib.parse.quote(str(number), safe="")), None,
+            search=False)
         if not isinstance(payload, dict):
             return None
-        return self._product_hit(payload.get("Product"),
-                                 payload.get("SearchLocaleUsed"), live=True)
+        hit = self._product_hit(payload.get("Product"),
+                                payload.get("SearchLocaleUsed"), live=True)
+        return _from_cache([hit], held)[0] if hit else None
 
     def fetch(self, part_id: str) -> dict[str, Any]:
         """Live detail for a manufacturer or DigiKey part number.
@@ -380,15 +468,23 @@ class MouserProvider(DistributorProvider):
 
     def _post(self, url: str, request: dict[str, Any]) -> list[PartHit]:
         creds = self._credentials()
-        payload = self._request(
-            self._query(url, {"apiKey": creds["MOUSER_API_KEY"]}),
-            method="POST", body=json.dumps(request).encode("utf-8"),
-            headers={"Content-Type": "application/json"})
+        # The address is kept without its query, where the key travels;
+        # the account the prices belong to is told apart by a
+        # fingerprint of the key.
+        payload, held = _cache.cached_call(
+            self.name, url, request,
+            {"account": _cache.account_fingerprint(creds["MOUSER_API_KEY"])},
+            lambda: self._request(
+                self._query(url, {"apiKey": creds["MOUSER_API_KEY"]}),
+                method="POST", body=json.dumps(request).encode("utf-8"),
+                headers={"Content-Type": "application/json"}),
+            kinds=lambda reply: _mouser_kinds(
+                url == self._SEARCH_URL, reply))
         results = payload.get("SearchResults") \
             if isinstance(payload, dict) else None
         parts = results.get("Parts") if isinstance(results, dict) else None
         hits = [self._part_hit(part) for part in _dicts(parts)]
-        return [hit for hit in hits if hit]
+        return _from_cache([hit for hit in hits if hit], held)
 
     def _part_hit(self, part: dict[str, Any]) -> PartHit | None:
         """One Part as a hit with its sourcing, or None without an MPN."""
