@@ -1,6 +1,6 @@
 # Development status: distributor sourcing and the purchasing BOM
 
-Last updated 2026-11-16, as a handover for the next working session. This is
+Last updated 2026-11-17, as a handover for the next working session. This is
 a working note for the fork's `feature/distributor-pricing` branch. Leave it
 out of any pull request meant for upstream.
 
@@ -50,8 +50,19 @@ only: nothing touches Mouser's Order API, a payment or a checkout.
   with an empty `CartKey`; part number, quantity, customer part number,
   manufacturer and MPN came back as sent; Mouser chose `Cut_Tape` when no
   packaging was asked for. The test cart was left in place.
-- Not seen live: what Mouser does with a quantity it does not accept, and
-  with a part number already in the cart. No tool removes a line.
+- **Live, 2026-11-17:** a part already in a cart is added to, not replaced:
+  a line at 10 with 10 more added reads back as one line at 20. Two parts
+  made two lines, and the totals were correct. Still not seen live: what
+  Mouser does with a quantity it does not accept. No tool lowers a quantity
+  or removes a line.
+- **Interoperability limitation, reproduced 2026-11-17:** a cart with two
+  lines (quantity 20 and 5, total $0.84) was opened in a browser, not edited,
+  and left with the Back button. The next API readback of the same cart key
+  succeeded with no error but showed zero items and $0.00. This is not
+  confirmed as a Mouser API bug, and its cause is unknown. Until it is
+  understood, finish API changes and checks before opening a cart on the
+  website, and check the site before retrying an insert. Details are in
+  `docs/PART_SOURCING.md` under "A cart at Mouser".
 - Tests: `tests/test_mouser_cart.py`, 25.
 
 ### Distributor cache

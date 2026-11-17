@@ -483,8 +483,37 @@ holds now.
 
 Run live on 2026-11-16 with one part: the part number, quantity and customer
 part number came back as sent, and Mouser chose `Cut_Tape` when no packaging
-was asked for. What Mouser does with a quantity it does not accept, and with
-a part number already in the cart, has not been seen live.
+was asked for. What Mouser does with a quantity it does not accept has not
+been seen live.
+
+Adding a part that is already in the cart adds to its quantity. It does not
+replace the line: a line at 10 that receives 10 more reads back as one line at
+20, and the item says it "now holds 20". Nothing in the integration can
+lower a quantity or remove a line, so a wrong quantity has to be corrected on
+Mouser's site.
+
+**Interoperability limitation: a cart opened in the browser can read back
+empty.** Reproduced on 2026-11-17 with one cart holding two resistor lines,
+built and checked through the API (create, insert, and readback all
+succeeded):
+
+| Step | Result |
+|---|---|
+| Before the browser | Two lines: one at quantity 20 and one at quantity 5, merchandise total $0.84 |
+| Cart opened in a browser, not edited, left with the browser's Back button | Not changed by the user |
+| API readback of the same cart key afterwards | Succeeded, with no error, but zero items and merchandise total $0.00 |
+
+The lines were not reported as removed or changed by the API, and the cart
+key was still valid, so the cause is not known. The sequence shows only that
+the API readback changed after the browser visit, not what the browser did.
+This is a reproducible limitation of using the website and the API on the
+same cart. It is not a confirmed Mouser API bug. Until it is understood:
+
+- Finish cart modifications and verification through the API before opening
+  that cart in a browser.
+- Treat an empty readback as possibly a site-side change, not as proof that
+  the API insert failed. Check the cart on Mouser's site before retrying an
+  insert, so that quantities are not doubled.
 
 ## Getting a KiCad-format part into Altium
 
