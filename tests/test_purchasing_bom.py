@@ -53,9 +53,10 @@ def test_parts_sharing_maker_and_number_are_one_line():
     ])
     assert out["lines"] == [
         {"manufacturer": "Texas Instruments", "part_number": "OPA837IDBVR",
+         "description": "RES 10K 1% 0603",
          "quantity": 1, "designators": ["U1"], "footprints": ["SOT-23-6"]},
         {"manufacturer": "Yageo", "part_number": "RC0603FR-0710KL",
-         "quantity": 3, "designators": ["R1", "R2", "R10"],
+         "description": "RES 10K 1% 0603", "quantity": 3, "designators": ["R1", "R2", "R10"],
          "footprints": ["RESC1608L"]},
     ]
     assert out["unresolved"] == [] and out["inconsistencies"] == []
@@ -84,12 +85,79 @@ def test_one_part_number_from_two_makers_stays_two_lines():
 
 def test_only_the_two_parameters_identify_a_part():
     """Same comment, description, library reference and supplier number:
-    still two parts, because the part numbers differ."""
+    still two parts, because the part numbers differ. The description
+    is carried on each line and nothing else is."""
     out = purchasing_bom([_part("R1"), _part("R2", number="RC0603FR-0710KP")])
     assert [l["quantity"] for l in out["lines"]] == [1, 1]
     text = json.dumps(out)
-    for other in ("10k", "RES 10K", "Res1", "311-10.0KHRCT-ND"):
+    for other in ("10k", "Res1", "311-10.0KHRCT-ND"):
         assert other not in text
+
+
+# ---- the description --------------------------------------------------------
+
+def test_a_line_carries_the_description_parameter():
+    out = purchasing_bom([
+        _part("R1"), _part("R2", Description="  RES 10K	1%  0603 "),
+        _part("U1", "Texas Instruments", "OPA837IDBVR", "SOT-23-6",
+              Description="IC OPAMP VFB 105MHZ SOT23-6")])
+    assert _line(out, "RC0603FR-0710KL")["description"] == "RES 10K 1% 0603"
+    assert _line(out, "OPA837IDBVR")["description"] ==         "IC OPAMP VFB 105MHZ SOT23-6"
+    assert out["inconsistencies"] == []
+
+
+def test_the_comment_never_stands_in_for_a_missing_description():
+    blank = _part("R1", Description="   ", Comment="10k pull-up, see note 4")
+    absent = _part("R2", Comment="DNP on rev A")
+    del absent["parameters"]["Description"]
+    out = purchasing_bom([blank, absent])
+    line = _line(out, "RC0603FR-0710KL")
+    assert line["quantity"] == 2, "a part with no description is still ordered"
+    assert line["description"] == ""
+    assert out["unresolved"] == [] and out["inconsistencies"] == []
+    assert "note 4" not in json.dumps(out) and "rev A" not in json.dumps(out)
+
+
+def test_descriptions_that_differ_are_reported_and_none_is_chosen():
+    out = purchasing_bom([
+        _part("R10"), _part("R2"),
+        _part("R3", Description="RES 10K OHM 1% 1/10W 0603"),
+        _part("R4", Description="")])
+    line = _line(out, "RC0603FR-0710KL")
+    assert line["quantity"] == 4, "the grouping does not depend on it"
+    assert line["designators"] == ["R2", "R3", "R4", "R10"]
+    assert line["description"] == ""
+    assert out["inconsistencies"] == [{
+        "issue": "one part with several descriptions, none chosen",
+        "manufacturer": "Yageo", "part_number": "RC0603FR-0710KL",
+        "descriptions": [
+            {"description": "", "designators": ["R4"]},
+            {"description": "RES 10K 1% 0603", "designators": ["R2", "R10"]},
+            {"description": "RES 10K OHM 1% 1/10W 0603",
+             "designators": ["R3"]}]}]
+
+
+def test_an_unresolved_component_keeps_its_description():
+    out = purchasing_bom([_part("R2", maker=None)])
+    assert _why(out, "R2")["description"] == "RES 10K 1% 0603"
+
+
+def test_a_variant_states_the_description_of_what_it_changes():
+    variant = {"name": "Lite", "variations": [
+        {"designator": "R1", "kind": "Fitted", "alternate_part": "",
+         "parameters": [{"name": "Part Number", "value": "RC0603FR-074K7L"},
+                        {"name": "description", "value": "RES 4K7 1% 0603"}]},
+        {"designator": "U1", "kind": "Alternate", "alternate_part": "LDO_B",
+         "parameters": [{"name": "Manufacturer", "value": "Microchip"},
+                        {"name": "Part Number",
+                         "value": "MCP1700T-3302E/TT"}]}]}
+    out = purchasing_bom([
+        _part("R1"),
+        _part("U1", "Texas Instruments", "TLV70033DDCR", "SOT-23-5A",
+              Description="IC REG LINEAR 3.3V 200MA SOT23-5")], variant)
+    assert _line(out, "RC0603FR-074K7L")["description"] == "RES 4K7 1% 0603"
+    # The base part's description is not the alternate's.
+    assert _line(out, "MCP1700T-3302E/TT")["description"] == ""
 
 
 def test_parameter_names_match_ignoring_case_and_values_are_trimmed():
@@ -133,7 +201,8 @@ def test_a_missing_or_blank_parameter_is_unresolved_never_guessed():
     assert [l["designators"] for l in out["lines"]] == [["R1"]]
     assert _why(out, "R2") == {
         "designator": "R2", "manufacturer": "",
-        "part_number": "RC0603FR-0710KL", "footprint": "RESC1608L",
+        "part_number": "RC0603FR-0710KL",
+        "description": "RES 10K 1% 0603", "footprint": "RESC1608L",
         "reason": "no Manufacturer parameter"}
     assert _why(out, "R3")["reason"] == "no Part Number parameter"
     assert _why(out, "R3")["manufacturer"] == "Yageo"
@@ -376,12 +445,14 @@ def test_purchasing_mode_carries_no_pins_nets_or_other_fields(monkeypatch):
     out = asyncio.run(_tool(monkeypatch, bridge)(mode="purchasing"))
     text = json.dumps(out)
     for absent in ("pins", "VCC_3V3", "GND", "lib_ref", "comment", "Res1",
-                   "Description", "Supplier", "_datasheet"):
+                   "10k", "Supplier", "_datasheet"):
         assert absent not in text, absent
     assert set(out) == {"mode", "summary", "lines", "unresolved",
                         "not_fitted", "not_in_bom", "inconsistencies"}
     assert set(out["lines"][0]) == {"manufacturer", "part_number",
-                                    "quantity", "designators", "footprints"}
+                                    "description", "quantity",
+                                    "designators", "footprints"}
+    assert _line(out, "RC0603FR-0710KL")["description"] == "RES 10K 1% 0603"
 
 
 def test_purchasing_mode_with_no_active_variant_is_the_base_design(

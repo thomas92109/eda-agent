@@ -142,14 +142,14 @@ search the distributors for, and how many. It reads two schematic parameters
 from every placed component, `Manufacturer` and `Part Number` (names matched
 ignoring case), and nothing else stands in for them: not the comment, the
 description, the library reference or a supplier number. The reply carries no
-pins or nets; on a 393-part board it came to 18 KB where the full BOM is
+pins or nets; on a 393-part board it came to 23 KB where the full BOM is
 over 100 KB.
 
 | Field | What it is |
 |---|---|
 | `summary` | `variant` and `variant_source`, the counts, `complete` and `truncated` |
-| `lines` | One per manufacturer and part number: `manufacturer`, `part_number`, `quantity`, `designators`, `footprints` |
-| `unresolved` | Fitted components that cannot be ordered as they stand: `designator`, `manufacturer`, `part_number`, `footprint`, `reason` |
+| `lines` | One per manufacturer and part number: `manufacturer`, `part_number`, `description`, `quantity`, `designators`, `footprints` |
+| `unresolved` | Fitted components that cannot be ordered as they stand: `designator`, `manufacturer`, `part_number`, `description`, `footprint`, `reason` |
 | `not_fitted` | Designators the variant leaves off the board |
 | `not_in_bom` | Fitted designators whose Component Kind keeps them out of the BOM (`Standard (No BOM)`, `Net Tie`, `Graphical`) |
 | `inconsistencies` | Things to look at before ordering, none of them merged away silently |
@@ -170,6 +170,17 @@ looks right.
 a placeholder (`N.A`, `TBD`, `-`) is `unresolved` with the reason. One part
 number under two manufacturers stays two lines. A manufacturer spelled two ways
 (`YAGEO`, `Yageo`) is one line, and the spellings are reported.
+
+**The description.** A line's `description` is the components' `Description`
+parameter: what the part is, for the person reading the order. It identifies
+nothing, so it never changes the grouping, and the comment never stands in for
+it, because a comment holds notes about the design. A part with no description
+is still ordered, with `description` empty. When the components of one line
+disagree, counting one with none against one with some, the line's
+`description` is empty and `inconsistencies` lists each description with the
+designators that carry it; none is picked. A variant's own value for
+`Description` replaces the base one, and an alternate part has a description
+only when its variant entry states one.
 
 **`complete` false means do not order from it.** It is false when the read
 stopped at `limit` with components left over (`truncated`), or when Altium

@@ -9,10 +9,70 @@ out of any pull request meant for upstream.
 - Repository: `C:\Projects\eda-agent`, branch `feature/distributor-pricing`,
   tracking `origin` (the fork). `upstream` is the original project; nothing
   is pushed there.
-- Two commits sit on top of `e5f3469` (`upstream/main`, version 0.8.2):
+- Three commits sit on top of `e5f3469` (`upstream/main`, version 0.8.2):
   1. `f7b5769` "Add DigiKey and Mouser sourcing improvements" (session 1).
-  2. "Add compact purchasing BOM support" (session 2, this update).
+  2. `120e1f6` "Add compact purchasing BOM support" (session 2), pushed to
+     `origin`.
+  3. "Add Description to the purchasing BOM" (session 3), pushed to
+     `origin`.
 - No pull request has been opened.
+
+## Session 3: description in the purchasing BOM
+
+### Completed
+
+Each purchasing BOM line, and each unresolved entry, now carries
+`description`, read from the component's `Description` parameter.
+
+- **Source:** the `Description` parameter only, name matched ignoring case.
+  The comment never stands in for it. The library convention is
+  `Manufacturer`, `Part Number`, `Description`; `Comment` holds design notes.
+- **Grouping is unchanged:** still `Manufacturer` + `Part Number`. A part
+  with no description is still ordered, with `description` empty.
+- **Disagreement:** when the components of one line carry different
+  descriptions (one with none counts as different), the line's `description`
+  is empty and `inconsistencies` gains "one part with several descriptions,
+  none chosen", listing each description with its designators.
+- **Variant:** a variant's own `Description` value replaces the base one. An
+  alternate part has a description only when its variant entry states one.
+- **Compatibility:** `description` is an added key; nothing was renamed or
+  removed, and `mode="full"` is untouched.
+
+The bridge already returns `Description` among the parameters of
+`project.get_component_info_batch`, so this is again Python-only. **No bridge
+change, no redeployment.**
+
+### Files
+
+- `src/eda_agent/export/purchasing_bom.py`, `src/eda_agent/tools/project.py`
+  (docstring only), `docs/PART_SOURCING.md`, `tests/test_purchasing_bom.py`
+  (5 new tests, 3 updated; 32 in all)
+
+### Test results
+
+Only the relevant tests were run: `test_purchasing_bom.py`,
+`test_tool_description_budget.py` and `test_docstring_references.py`, 40
+passed. The full suite was not rerun.
+
+### Live validation (SensorBoard project, read-only)
+
+Same method as session 2: dev code against the live bridge, four read
+commands, nothing written.
+
+- 393 placed, 374 fitted, 19 not fitted, 0 unresolved, quantities sum to 374.
+- 103 line items (104 in session 2; the design was edited in between).
+- 101 lines carry a description. One has none in the design. One has two
+  descriptions across its four components and was reported, with none chosen.
+- Reply size 23.2 KB (18.4 KB without descriptions), against 113.6 KB.
+
+### Known limitations
+
+- A variant that changes a component's `Part Number` without also stating a
+  `Description` keeps the base part's description on the new line.
+- Descriptions are compared as written apart from spacing, so a difference in
+  case alone is reported as a disagreement.
+- Still not called through the MCP server itself, which needs a restart to
+  load the new code.
 
 ## Session 2: compact purchasing BOM
 

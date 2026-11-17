@@ -13,6 +13,11 @@ reference and never dropped.
 Every placed component lands in exactly one place: a line, ``unresolved``,
 ``not_fitted`` (the variant leaves it off) or ``not_in_bom`` (its
 Component Kind keeps it out of the BOM).
+
+A line also carries the components' ``Description`` parameter, which
+says what the part is and identifies nothing. The comment never stands
+in for it. Components of one line that disagree on it are reported, and
+the line then carries no description rather than one picked from them.
 """
 from __future__ import annotations
 
@@ -25,6 +30,7 @@ __all__ = ["purchasing_bom"]
 
 MANUFACTURER = "Manufacturer"
 PART_NUMBER = "Part Number"
+DESCRIPTION = "Description"
 
 #: Values written into a required field to say there is none. A part
 #: number of "N.A" orders nothing, so it is unresolved like a blank.
@@ -106,10 +112,12 @@ def purchasing_bom(components: list[dict[str, Any]],
     they could not be read. ``variant`` is one entry of
     ``proj_list_variants``, or None for the base design.
 
-    Returns ``lines`` (manufacturer, part_number, quantity, designators,
-    footprints), ``unresolved`` (designator, manufacturer, part_number,
-    footprint, reason), ``not_fitted``, ``not_in_bom``,
-    ``inconsistencies`` and ``counts``.
+    Returns ``lines`` (manufacturer, part_number, description, quantity,
+    designators, footprints), ``unresolved`` (designator, manufacturer,
+    part_number, description, footprint, reason), ``not_fitted``,
+    ``not_in_bom``, ``inconsistencies`` and ``counts``. A line's
+    description is empty when its components have none or disagree; the
+    disagreement is in ``inconsistencies`` with who says what.
     """
     kept, clashing, repeated = _one_per_designator(components)
     if variant is not None:
@@ -121,6 +129,7 @@ def purchasing_bom(components: list[dict[str, Any]],
 
     lines: dict[tuple[str, str], dict[str, Any]] = {}
     spellings: dict[tuple[str, str], set[str]] = {}
+    described: dict[tuple[str, str], dict[str, list[str]]] = {}
     unresolved: list[dict[str, Any]] = []
     not_in_bom: list[str] = []
     fitted = 0
@@ -145,6 +154,7 @@ def purchasing_bom(components: list[dict[str, Any]],
             source[name] = value
         maker, maker_clash = _read(source, MANUFACTURER)
         number, number_clash = _read(source, PART_NUMBER)
+        description = _read(source, DESCRIPTION)[0] or ""
 
         reasons = []
         if not designator:
@@ -169,19 +179,23 @@ def purchasing_bom(components: list[dict[str, Any]],
             unresolved.append({"designator": designator,
                                "manufacturer": maker or "",
                                "part_number": number or "",
+                               "description": description,
                                "footprint": footprint,
                                "reason": "; ".join(reasons)})
             continue
 
         key = (_key(maker), _key(number))
         line = lines.setdefault(key, {
-            "manufacturer": maker, "part_number": number, "quantity": 0,
+            "manufacturer": maker, "part_number": number,
+            "description": "", "quantity": 0,
             "designators": [], "footprints": []})
         line["quantity"] += 1
         line["designators"].append(designator)
         if footprint and footprint not in line["footprints"]:
             line["footprints"].append(footprint)
         spellings.setdefault(key, set()).add(maker)
+        described.setdefault(key, {}).setdefault(
+            description, []).append(designator)
 
     inconsistencies: list[dict[str, Any]] = []
     makers_of: dict[str, list[str]] = {}
@@ -201,6 +215,19 @@ def purchasing_bom(components: list[dict[str, Any]],
                 "issue": "manufacturer spelled several ways, counted as one",
                 "part_number": line["part_number"],
                 "spellings": sorted(spellings[key])})
+        if len(described[key]) == 1:
+            line["description"] = next(iter(described[key]))
+        else:
+            # Which one is right is not ours to say, so the line names
+            # none and every description is kept with its designators.
+            inconsistencies.append({
+                "issue": "one part with several descriptions, none chosen",
+                "manufacturer": line["manufacturer"],
+                "part_number": line["part_number"],
+                "descriptions": [
+                    {"description": text,
+                     "designators": sorted(names, key=_natural)}
+                    for text, names in sorted(described[key].items())]})
         makers = makers_of[key[1]]
         if len(makers) > 1 and line["manufacturer"] == sorted(makers)[0]:
             inconsistencies.append({

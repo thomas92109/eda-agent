@@ -1274,7 +1274,9 @@ def register_project_tools(mcp):
         values for those two parameters. A component is never guessed
         or dropped: one lacking either parameter is in ``unresolved``
         with the reason, as is an alternate part whose variant entry
-        does not state both.
+        does not state both. A line's ``description`` is the
+        ``Description`` parameter, never the comment; it is empty when
+        the line's components disagree, which ``inconsistencies`` lists.
 
         Args:
             project_path: Optional project path. If None, uses active project.
@@ -1296,9 +1298,10 @@ def register_project_tools(mcp):
             components, fitted_components, line_items,
             unresolved_components, not_fitted_components,
             not_in_bom_components, complete, truncated), ``lines``
-            (manufacturer, part_number, quantity, designators,
-            footprints), ``unresolved`` (designator, manufacturer,
-            part_number, footprint, reason), ``not_fitted``,
+            (manufacturer, part_number, description, quantity,
+            designators, footprints), ``unresolved`` (designator,
+            manufacturer, part_number, description, footprint, reason),
+            ``not_fitted``,
             ``not_in_bom`` (Component Kind keeps it out of the BOM)
             and ``inconsistencies``. ``complete`` false means
             quantities are short: do not order from it.
