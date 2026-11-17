@@ -111,3 +111,78 @@ extensions/easyeda/*.eext
 
 # The Rust route core's build output
 route-core/target/
+
+# ---------------------------------------------------------------------------
+# Proprietary engineering and purchasing data: never commit. Patterns match
+# data files by extension or by specific name, never by a bare word, so
+# source files such as bom.py or purchasing_plan.py stay tracked. Synthetic
+# test fixtures are re-included below their rules.
+
+# Spreadsheets and CSV exports (BOMs, purchasing lists, distributor exports)
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
+*.ods
+!tests/**/fixtures/**/*.csv
+!tests/**/fixtures/**/*.tsv
+
+# Databases (copies of the distributor cache, project databases)
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Purchasing and BOM output, by name
+*purchasing*.json
+*purchasing*.html
+*bom*.json
+*bom*.html
+
+# Local data folders: nothing inside them is committed
+local-data/
+purchasing-data/
+boms/
+
+# Credentials, tokens and key material
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.token
+*.tokens.json
+*token*.json
+*client_secret*
+*credentials*.json
+*secret*.json
+.netrc
+
+# Altium and KiCad design files (projects, schematics, PCBs, libraries, outputs)
+*.SchDoc
+*.PcbDoc
+*.SchLib
+*.PcbLib
+*.PrjPcb
+*.OutJob
+*.kicad_pcb
+*.kicad_sch
+*.kicad_pro
+!tests/integration/fixtures/EDAAgentTest.PrjPcb
+
+# Manufacturing outputs (Gerber, drill, 3D models)
+*.gbr
+*.gtl
+*.gbl
+*.gto
+*.gbo
+*.drl
+*.step
+*.stp
+*.wrl
+*.glb
