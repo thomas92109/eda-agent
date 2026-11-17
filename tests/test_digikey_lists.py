@@ -18,6 +18,8 @@ from eda_agent.libimport.providers import digikey_lists
 from eda_agent.libimport.providers.digikey_lists import (
     DigiKeyLists,
     ListInputError,
+    fit_customer_reference,
+    is_designator_list,
     join_designators,
 )
 from eda_agent.libimport.providers.base import (
@@ -65,6 +67,12 @@ class _DigiKey:
         self.reference_limit = None
         self.quantity_multiple = 1
         self.rename_lists = False
+        #: False: a part comes back with no pack options at all.
+        self.pack_options = True
+        #: True: DigiKey selects the reel whatever number was entered.
+        self.select_reel = False
+        #: True: every page of lists is the first page.
+        self.ignore_start_index = False
         monkeypatch.setattr(_URLOPEN, self)
 
     # -- helpers the tests read --
@@ -137,6 +145,17 @@ class _DigiKey:
         method = request.get_method()
         if steps == ["lists"] and method == "POST":
             wanted = json.loads(body)
+            # As the real MyLists answers: its Swagger file calls
+            # nothing in ListSettings required, the service does.
+            if not isinstance((wanted.get("ListSettings") or {})
+                              .get("ColumnPreferences"), list):
+                self._fail(request, 400, {
+                    "StatusCode": 400,
+                    "ErrorMessage": "Error(s) in Parameters.",
+                    "ValidationErrors": [{
+                        "Field": "ListSettings.ColumnPreferences",
+                        "Message": "The ColumnPreferences field is "
+                                   "required."}]})
             list_id = f"LIST{len(self.lists) + 1}"
             name = wanted["ListName"] + (" (2)" if self.rename_lists else "")
             self.lists[list_id] = {
@@ -145,8 +164,11 @@ class _DigiKey:
                 "request": wanted}
             return _Reply(json.dumps(list_id).encode())
         if steps == ["lists"] and method == "GET":
-            return _Reply(json.dumps(
-                [self._data(l) for l in self.lists.values()]).encode())
+            start, limit = int(query["startIndex"]), int(query["limit"])
+            if self.ignore_start_index:
+                start = 0
+            every = [self._data(l) for l in self.lists.values()]
+            return _Reply(json.dumps(every[start:start + limit]).encode())
         held = self.lists.get(steps[1])
         if held is None:
             self._fail(request, 404, {
@@ -169,10 +191,24 @@ class _DigiKey:
                     reference = reference[:self.reference_limit]
                 asked = wanted["Quantities"][0]["Quantity"]
                 multiple = self.quantity_multiple
+                # As the real MyLists answers: the part's own number is
+                # the product's base number (the reel when there is
+                # one); the packaging entered is the selected option.
+                packs = [sku for sku, entry in _CATALOGUE.items()
+                         if known and entry[0] == known[0]]
+                reel = next((s for s in packs if s.endswith("TR-ND")), None)
+                base = (reel or number) if known else ""
+                options = [{"DigiKeyPartNumber": sku,
+                            "PackType": "TR" if sku == reel else "CT"}
+                           for sku in packs] if self.pack_options else []
+                selected = -1
+                if options:
+                    selected = packs.index(
+                        reel if self.select_reel and reel else number)
                 held["parts"].append({
                     "UniqueId": unique,
                     "RequestedPartNumber": number,
-                    "DigiKeyPartNumber": number if known else "",
+                    "DigiKeyPartNumber": base,
                     "ManufacturerPartNumber": known[0] if known else "",
                     "Manufacturer": known[1] if known else "",
                     "Description": known[2] if known else "",
@@ -184,7 +220,9 @@ class _DigiKey:
                     "Quantities": [{
                         "QuantityRequested":
                             -(-asked // multiple) * multiple,
-                        "SelectedPackType": "CutTape"}],
+                        "SelectedPackType": "",
+                        "SelectedPackOptionIndex": selected,
+                        "PackOptions": options}],
                     "Flags": {"IsMatched": bool(known)},
                     "sent": wanted,
                 })
@@ -381,12 +419,26 @@ def test_a_list_is_created_private_and_set_to_keep_what_is_entered(
         "ListName": "Bench build", "Source": "external",
         "ListSettings": {"Visibility": "Private",
                          "PackagePreference": "EnteredPartNumber",
+                         "ColumnPreferences": [],
                          "AutoCorrectQuantities": False,
                          "AttritionEnabled": False,
                          "AutoPopulateCref": False}}
     post = digikey.calls("/mylists/v1/lists", "POST")[0]
     assert post.get_header("X-digikey-client-id") == "test-client-id"
     assert post.get_header("X-digikey-account-id") == "12345"
+
+
+def test_a_list_is_created_with_the_column_preferences_digikey_requires(
+        digikey):
+    """Live, 2026-11-16: a create without them was refused with
+    "ListSettings.ColumnPreferences: The ColumnPreferences field is
+    required." It is an array of {ColumnName, IsVisible}."""
+    created = _signed_in(digikey).create_list("Bench build")
+    assert created["list_id"] == "LIST1"
+    sent = json.loads(digikey.calls("/mylists/v1/lists", "POST")[0].data)
+    columns = sent["ListSettings"]["ColumnPreferences"]
+    assert isinstance(columns, list)
+    assert all(set(c) == {"ColumnName", "IsVisible"} for c in columns)
 
 
 def test_a_name_digikey_changed_is_reported(digikey):
@@ -436,10 +488,12 @@ def test_parts_are_added_with_sku_quantity_and_both_references(digikey):
     assert sent[1]["ManufacturerName"] == "Texas Instruments"
     assert out["items"][1] == {
         "item": 1, "sku": "296-1395-1-ND", "quantity": 2,
+        "designators": "U1,U2",
         "customer_reference": "U1,U2", "reference_designator": "U1,U2",
         "description": "IC OPAMP DUAL SOIC-8", "unique_id": "U2",
         "digikey_description": "IC OPAMP GP 2 CIRCUIT 8SOIC",
-        "differences": []}
+        "sku_source": digikey_lists._SKU_FIELD,
+        "differences": [], "sku_verified": True, "verified": True}
 
 
 def test_the_two_references_can_be_set_apart_from_the_designators(digikey):
@@ -463,9 +517,12 @@ def test_the_list_reads_back_what_was_added(digikey):
     assert got["items"] == [{
         "unique_id": "U1", "requested_part_number": "311-10.0KHRCT-ND",
         "sku": "311-10.0KHRCT-ND",
+        "sku_source": "Quantities[SelectedQuantityIndex].PackOptions"
+                      "[SelectedPackOptionIndex].DigiKeyPartNumber",
+        "base_part_number": "311-10.0KHRTR-ND",
         "manufacturer_part_number": "RC0603FR-0710KL",
         "manufacturer": "YAGEO", "matched": True, "quantity": 3,
-        "calculated_quantity": None, "pack_type": "CutTape",
+        "calculated_quantity": None, "pack_type": "CT",
         "quantities": [3], "customer_reference": "R1,R2,R3",
         "reference_designator": "R1,R2,R3", "notes": "RES 10K 1% 0603",
         "digikey_description": "RES 10K OHM 1% 1/10W 0603",
@@ -473,19 +530,230 @@ def test_the_list_reads_back_what_was_added(digikey):
     assert [l["list_id"] for l in lists.lists()] == ["LIST1"]
 
 
-def test_a_long_reference_is_sent_whole_and_warned_about(digikey):
+# ---- the exact orderable number ---------------------------------------------
+
+def test_the_cut_tape_number_is_read_from_the_selected_pack_option(digikey):
+    """Live, 2026-11-16: 311-10.0KHRCT-ND was added and the part's own
+    DigiKeyPartNumber came back as the reel, 311-10.0KHRTR-ND, with the
+    cut tape as the selected pack option. That was reported as a
+    difference; it is what was asked for."""
     lists = _signed_in(digikey)
     list_id = lists.create_list("Bench build")["list_id"]
-    names = [f"C{n}" for n in range(101, 141)]
-    out = lists.add_items(list_id, [_item(quantity=40, designators=names)])
-    whole = ",".join(names)
-    assert len(whole) > 48
-    assert digikey.lists[list_id]["parts"][0]["sent"][
-        "CustomerReference"] == whole
+    out = lists.add_items(list_id, [_item()])
+    held = digikey.lists[list_id]["parts"][0]
+    assert held["DigiKeyPartNumber"] == "311-10.0KHRTR-ND"
     row = out["items"][0]
-    assert row["customer_reference"] == whole and row["differences"] == []
-    assert f"{len(whole)} characters" in row["label_warning"]
-    assert "sent whole" in row["label_warning"]
+    assert row["differences"] == [] and row["sku_verified"] is True
+    assert row["sku_source"] == (
+        "Quantities[SelectedQuantityIndex].PackOptions"
+        "[SelectedPackOptionIndex].DigiKeyPartNumber")
+    assert out["verified"] == 1
+    part = lists.get_list(list_id)["items"][0]
+    assert part["sku"] == "311-10.0KHRCT-ND"
+    assert part["base_part_number"] == "311-10.0KHRTR-ND"
+    assert part["pack_type"] == "CT"
+
+
+def test_another_packaging_selected_is_a_difference(digikey):
+    digikey.select_reel = True
+    lists = _signed_in(digikey)
+    list_id = lists.create_list("Bench build")["list_id"]
+    out = lists.add_items(list_id, [_item()])
+    row = out["items"][0]
+    assert row["differences"] == [
+        "sku: sent '311-10.0KHRCT-ND', the packaging selected in the list "
+        "is '311-10.0KHRTR-ND'"]
+    assert row["sku_verified"] is False and out["verified"] == 0
+
+
+def test_no_selected_packaging_is_never_verified(digikey):
+    """The base number alone establishes nothing, even when it happens
+    to be the number that was sent."""
+    digikey.pack_options = False
+    lists = _signed_in(digikey)
+    list_id = lists.create_list("Bench build")["list_id"]
+    out = lists.add_items(list_id, [_item(), _item("311-10.0KHRTR-ND")])
+    assert out["added"] == 2 and out["verified"] == 0
+    for row in out["items"]:
+        assert row["differences"] == [] and row["sku_verified"] is False
+        assert row["verified"] is False
+        assert "'311-10.0KHRTR-ND'" in row["sku_unverified"]
+        assert "sku_source" not in row
+    part = lists.get_list(list_id)["items"][1]
+    assert part["sku"] == "" and part["sku_source"] is None
+    assert part["base_part_number"] == "311-10.0KHRTR-ND"
+
+
+@pytest.mark.parametrize("index", [None, -1, 7, "x"])
+def test_a_pack_option_index_that_points_nowhere_selects_nothing(index):
+    summary = digikey_lists._part_summary({
+        "DigiKeyPartNumber": "311-10.0KHRTR-ND",
+        "Quantities": [{"QuantityRequested": 10,
+                        "SelectedPackOptionIndex": index,
+                        "PackOptions": [
+                            {"DigiKeyPartNumber": "311-10.0KHRCT-ND"}]}]})
+    assert summary["sku"] == "" and summary["sku_source"] is None
+
+
+# ---- the customer reference -------------------------------------------------
+
+_TEN = "R101, R102, R103, R104, R105, R106, R107, R108, R109, R110"
+_EIGHT = "R101,R102,R103,R104,R105,R106,R107,R108"
+
+
+def test_a_customer_reference_that_fits_is_sent_whole_without_spaces():
+    assert fit_customer_reference("R1,R2") == ("R1,R2", [])
+    assert fit_customer_reference("R1, R2, R3") == ("R1,R2,R3", [])
+    assert fit_customer_reference("R1 R2  R3") == ("R1,R2,R3", [])
+    assert fit_customer_reference(["R1", " R2 "]) == ("R1,R2", [])
+    assert fit_customer_reference(None) == ("", [])
+    # Exactly 48 characters once the spaces are gone is a fit: 56 as
+    # written, and every designator is on the label.
+    written = _EIGHT.replace(",", ", ") + ", R1090000"
+    assert len(written) == 56
+    exact = _EIGHT + ",R1090000"
+    assert len(exact) == 48
+    assert fit_customer_reference(written) == (exact, [])
+    assert fit_customer_reference(exact.split(",")) == (exact, [])
+
+
+def test_an_overflowing_reference_ends_in_more():
+    # One character over: the last designator goes and +MORE says so.
+    over = _EIGHT + ",R10900000"
+    assert len(over) == 49
+    assert fit_customer_reference(over) == (
+        _EIGHT + ",+MORE", ["R10900000"])
+    # However it was written, the label reads the same.
+    names = [f"R{n}" for n in range(101, 111)]
+    for given in (names, ",".join(names), ", ".join(names),
+                  " ".join(names)):
+        assert fit_customer_reference(given) == (
+            "R101,R102,R103,R104,R105,R106,R107,R108,+MORE",
+            ["R109", "R110"])
+
+
+def test_room_for_more_can_cost_a_designator_that_would_have_fit():
+    """R109 fits in 48 characters, but not with ",+MORE" after it: it
+    is left out and named, rather than the ending being squeezed."""
+    nine = _EIGHT + ",R109"
+    assert len(nine) <= 48 and len(nine + ",+MORE") > 48
+    got, omitted = fit_customer_reference(_TEN)
+    assert got == _EIGHT + ",+MORE" and len(got) == 45
+    assert omitted == ["R109", "R110"]
+
+
+def test_a_single_designator_too_long_is_never_cut():
+    assert fit_customer_reference(["X" * 49]) == ("+MORE", ["X" * 49])
+    assert fit_customer_reference(["X" * 49, "R1"]) == (
+        "+MORE", ["X" * 49, "R1"])
+    # 45 characters fit alone, but not once others follow and +MORE is
+    # needed; the reference is then +MORE and nothing else.
+    assert fit_customer_reference(["X" * 45]) == ("X" * 45, [])
+    assert fit_customer_reference(["X" * 45, "R12"]) == (
+        "+MORE", ["X" * 45, "R12"])
+
+
+def test_a_fitted_reference_keeps_its_promises_whatever_the_list():
+    for separator in (",", ", ", " "):
+        for width in (1, 2, 3, 5, 9):
+            for count in range(1, 40):
+                names = [f"R{str(n).zfill(width)}" for n in range(count)]
+                compact = ",".join(names)
+                got, omitted = fit_customer_reference(separator.join(names))
+                assert len(got) <= 48 and " " not in got
+                if len(compact) <= 48:
+                    assert (got, omitted) == (compact, [])
+                    continue
+                assert got.endswith(",+MORE") and omitted
+                kept = got[:-len(",+MORE")]
+                assert kept.split(",") + omitted == names
+                assert not kept.endswith(",")
+
+
+def test_a_long_reference_keeps_whole_designators_and_names_the_rest(
+        digikey):
+    """Live, 2026-11-16: DigiKey stored 48 of 58 characters and ended
+    the reference in the middle of the list, with nothing to show it."""
+    digikey.reference_limit = 48
+    lists = _signed_in(digikey)
+    list_id = lists.create_list("Bench build")["list_id"]
+    out = lists.add_items(
+        list_id, [{**_item(quantity=10), "designators": _TEN}])
+    sent = digikey.lists[list_id]["parts"][0]["sent"]
+    assert sent["CustomerReference"] == _EIGHT + ",+MORE"
+    # The reference designator is the text as given, spaces and all.
+    assert sent["ReferenceDesignator"] == _TEN
+    row = out["items"][0]
+    assert row["designators"] == _TEN
+    assert row["reference_designator"] == _TEN
+    assert row["customer_reference"] == sent["CustomerReference"]
+    assert row["customer_reference_omitted"] == ["R109", "R110"]
+    assert "2 designator(s) were left out of it: R109, R110" in \
+        row["customer_reference_warning"]
+    assert "+MORE" in row["customer_reference_warning"]
+    assert row["differences"] == [] and out["verified"] == 1
+    held = lists.get_list(list_id)["items"][0]
+    assert held["customer_reference"] == sent["CustomerReference"]
+    assert held["reference_designator"] == _TEN
+
+
+def test_a_reference_that_fits_carries_no_warning(digikey):
+    lists = _signed_in(digikey)
+    list_id = lists.create_list("Bench build")["list_id"]
+    row = lists.add_items(list_id, [
+        {**_item(), "designators": "R1, R2, R3"}])["items"][0]
+    assert row["designators"] == "R1, R2, R3"
+    assert row["reference_designator"] == "R1, R2, R3"
+    assert row["customer_reference"] == "R1,R2,R3"
+    assert "customer_reference_omitted" not in row
+    assert "customer_reference_warning" not in row
+    assert row["differences"] == []
+
+
+def test_what_counts_as_a_designator_list():
+    for text in ("R1", "R1,R2", "R101, C5, U3A, TP12", "R1 R2 R3", _TEN):
+        assert is_designator_list(text), text
+    for text in ("", "Bag 7", "Bench build bag 7, second shelf", "R1-R5",
+                 "R1, R2 and R3", "PO 4471, R1", "X" * 49, "10k"):
+        assert not is_designator_list(text), text
+
+
+def test_a_customer_reference_given_as_designators_is_fitted(digikey):
+    lists = _signed_in(digikey)
+    list_id = lists.create_list("Bench build")["list_id"]
+    out = lists.add_items(list_id, [_item(
+        customer_reference=_TEN, reference_designator="R1,R2,R3")])
+    row = out["items"][0]
+    assert row["customer_reference"] == _EIGHT + ",+MORE"
+    assert row["customer_reference_omitted"] == ["R109", "R110"]
+    assert row["reference_designator"] == "R1,R2,R3"
+    assert row["differences"] == []
+
+
+def test_a_customer_reference_in_the_users_words_is_kept_or_refused(
+        digikey):
+    """Words of the user's own are not reworded: 48 characters go as
+    they are, 49 are refused and nothing is sent."""
+    lists = _signed_in(digikey)
+    list_id = lists.create_list("Bench build")["list_id"]
+    fits = "Bench build bag 7, second shelf, left drawer, #2"
+    assert len(fits) == 48
+    row = lists.add_items(
+        list_id, [_item(customer_reference=fits)])["items"][0]
+    assert row["customer_reference"] == fits
+    assert "customer_reference_omitted" not in row
+    assert digikey.lists[list_id]["parts"][0]["CustomerReference"] == fits
+    posts = len(digikey.calls("/parts", "POST"))
+    for long in (fits + "2", "X" * 49, "R1-R40, see the build sheet for "
+                 "the rest of this assembly"):
+        with pytest.raises(ListInputError) as caught:
+            lists.add_items(list_id, [_item(customer_reference=long)])
+        problem = caught.value.problems[0]["problems"][0]
+        assert f"customer_reference is {len(long)} characters" in problem
+        assert "DigiKey keeps 48" in problem
+        assert "not a list of reference designators" in problem
+    assert len(digikey.calls("/parts", "POST")) == posts
+    assert len(digikey.lists[list_id]["parts"]) == 1
 
 
 def test_a_reference_digikey_cut_short_is_reported_never_hidden(digikey):
@@ -567,8 +835,9 @@ def test_an_unmatched_part_is_reported_when_the_check_is_off(digikey):
     assert digikey.calls("/products/") == []
     assert out["added"] == 1 and out["verified"] == 0
     assert out["items"][0]["differences"] == [
-        "DigiKey did not match this number to a product",
-        "sku: sent 'NO-SUCH-PART-ND', list holds ''"]
+        "DigiKey did not match this number to a product"]
+    assert out["items"][0]["sku_verified"] is False
+    assert "no selected packaging" in out["items"][0]["sku_unverified"]
 
 
 def test_a_batch_digikey_refuses_says_what_was_and_was_not_sent(
@@ -611,6 +880,62 @@ def test_a_large_list_is_read_in_pages_and_added_in_batches(
     assert [i["quantity"] for i in got["items"]] == list(range(1, 11))
     assert [i["reference_designator"] for i in got["items"]] == [
         f"R{n}" for n in range(1, 11)]
+
+
+# ---- every list of the account ----------------------------------------------
+
+def _many_lists(digikey, count):
+    lists = _signed_in(digikey)
+    for number in range(count):
+        lists.create_list(f"List {number}")
+    return lists
+
+
+def test_every_list_is_read_not_the_first_fifty(digikey, monkeypatch):
+    """Live, 2026-11-16: the account held 84 lists and 50 came back,
+    with nothing to say there were more."""
+    monkeypatch.setattr(digikey_lists, "_LIST_PAGE", 50)
+    lists = _many_lists(digikey, 84)
+    out = lists.all_lists()
+    assert out["count"] == 84 and out["complete"] is True
+    assert "incomplete" not in out
+    assert [l["name"] for l in out["lists"]] == [
+        f"List {n}" for n in range(84)]
+    starts = [dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(
+        r.full_url).query))["startIndex"]
+        for r in digikey.calls("/mylists/v1/lists?", "GET")]
+    assert starts[-3:] == ["0", "50", "84"]
+    assert len(lists.lists()) == 84
+
+
+def test_reading_lists_stops_at_the_safety_limit_and_says_so(
+        digikey, monkeypatch):
+    monkeypatch.setattr(digikey_lists, "_LIST_PAGE", 2)
+    monkeypatch.setattr(digikey_lists, "_LIST_MAX_PAGES", 3)
+    out = _many_lists(digikey, 7).all_lists()
+    assert out["count"] == 6 and out["complete"] is False
+    assert "stopped after 3 requests of 2 lists" in out["incomplete"]
+    assert "6 lists were read" in out["incomplete"]
+
+
+def test_a_repeated_page_of_lists_is_reported_not_looped_on(
+        digikey, monkeypatch):
+    monkeypatch.setattr(digikey_lists, "_LIST_PAGE", 3)
+    digikey.ignore_start_index = True
+    out = _many_lists(digikey, 5).all_lists()
+    assert out["count"] == 3 and out["complete"] is False
+    assert "lists already read" in out["incomplete"]
+    assert len(digikey.calls("/mylists/v1/lists?", "GET")) == 2
+
+
+def test_the_tool_says_when_the_lists_are_incomplete(digikey, monkeypatch):
+    monkeypatch.setattr(digikey_lists, "_LIST_PAGE", 2)
+    monkeypatch.setattr(digikey_lists, "_LIST_MAX_PAGES", 2)
+    _many_lists(digikey, 5)
+    every = asyncio.run(_tools()["part_list_get"]())
+    assert every["ok"] and every["count"] == 4
+    assert every["complete"] is False and "may hold more" in \
+        every["incomplete"]
 
 
 def test_a_list_that_does_not_exist_is_an_error_not_an_empty_list(digikey):
@@ -663,6 +988,7 @@ def test_the_tools_sign_in_create_add_and_read_back(digikey):
     assert got["items"][0]["quantity"] == 3
     every = asyncio.run(tools["part_list_get"]())
     assert every["count"] == 1 and every["lists"][0]["name"] == "Bench build"
+    assert every["complete"] is True
 
 
 def test_the_tools_answer_failures_without_raising(digikey):

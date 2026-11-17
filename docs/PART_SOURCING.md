@@ -233,13 +233,45 @@ by its owner only. No token appears in a reply or a log.
 
 No other field is accepted, so a component's `Comment` cannot be sent.
 
-**References are never shortened.** The designators, all of them, comma
-separated, go into both `CustomerReference` and `ReferenceDesignator`.
-DigiKey's API description states no maximum length for either, so the whole
-text is sent and then compared with what the list holds; a difference is
-reported per item under `differences`. A customer reference over 48
-characters gets a `label_warning`: that figure is what DigiKey's forum says
-fits a bag label, and it is not a documented limit.
+**A designator is never cut in two.** The designators, all of them, comma
+separated, go into `ReferenceDesignator` whole and as given. DigiKey keeps
+only 48 characters of a `CustomerReference` and drops the rest without
+saying so (observed live on 2026-11-16; its API description states no
+limit). So the customer reference gets the designators joined by commas
+with no spaces, to leave the label as much room as possible:
+
+| Designators | `CustomerReference` |
+|---|---|
+| `R1, R2, R3` | `R1,R2,R3` |
+| `R101` to `R109` (44 characters joined) | all nine |
+| `R101` to `R110` (49 joined) | `R101,R102,R103,R104,R105,R106,R107,R108,+MORE` |
+| one designator of 49 characters | `+MORE` |
+
+When they do not all fit, it ends in `,+MORE`, and room for that ending is
+kept free: in the third row `R109` would fit in 48 characters on its own,
+but not with `,+MORE` after it. The item then says what was left out:
+`customer_reference_omitted` lists the designators,
+`customer_reference_warning` explains, and `designators` holds the full
+text as given. What the list then holds is compared with what was sent, and
+a difference is reported per item under `differences`.
+
+A `customer_reference` given outright is fitted the same way when it is a
+list of designators (`R1`, `C101`, `TP12`, `U3A`). Any other wording is the
+user's own and is sent as written; over 48 characters it is refused, with
+nothing added, because shortening it could change what it says.
+
+**The exact orderable number.** DigiKey's own number on a list part is the
+product's base number, often the reel, whatever packaging was entered. The
+packaging in the list is the selected pack option of the part's quantity,
+and `sku` is read from there; the base number is returned separately as
+`base_part_number`. An item is `verified` only when that selected number is
+the `sku` that was sent. When DigiKey names no selected packaging the item
+is not verified and `sku_unverified` says so.
+
+**All of the account's lists.** `part_list_get` without a `list_id` reads
+the lists 100 at a time until DigiKey returns an empty page, up to 20
+requests. `complete` is false, with `incomplete` giving the reason, when it
+stopped before the end.
 
 **Whether the reference reaches the bag label** is stated only on DigiKey's
 forum, not in its API documentation: the list's customer reference is carried

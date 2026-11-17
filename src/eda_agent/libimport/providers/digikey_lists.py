@@ -20,11 +20,22 @@ OAuth pages. What those state, and what they leave open:
   where nothing listens: the browser shows a failed page whose address
   carries the code, and the user copies that address back.
 * A part to add (``RequestedPart``) has no field for a DigiKey number as
-  such, no description and no length limit on any field. The number
-  goes in ``RequestedPartNumber``; what DigiKey made of it comes back as
-  ``DigiKeyPartNumber``. Because no limit is published, nothing here
-  shortens a reference: everything is sent whole and compared with what
-  DigiKey stored, and a difference is reported.
+  such, no description and no published length limit on any field. The
+  number goes in ``RequestedPartNumber``.
+* What DigiKey made of the number (live, 2026-11-16): the part's own
+  ``DigiKeyPartNumber`` is the product's base number, often the reel,
+  whatever packaging was asked for. The packaging in the list is the
+  selected entry of the quantity's ``PackOptions``, and that entry's
+  ``DigiKeyPartNumber`` is the orderable number. Only that is compared
+  with what was sent.
+* DigiKey keeps 48 characters of a ``CustomerReference`` and drops the
+  rest without saying so (live, 2026-11-16); a ``ReferenceDesignator``
+  of 58 came back whole. So the reference designator carries every
+  designator as given, and the customer reference carries them joined
+  by commas without spaces: all of them when they fit, otherwise as
+  many whole ones as fit before a closing ``,+MORE``, with the ones
+  left out named in the result. A customer reference that is not a designator list is the
+  user's wording: too long, it is refused, never shortened.
 * What an unknown part number does is not documented. The read-back
   carries ``Flags.IsMatched``.
 
@@ -38,6 +49,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import secrets
 import time
 import urllib.parse
@@ -54,17 +66,33 @@ from eda_agent.libimport.providers.base import (
     ProviderUnavailable,
 )
 
-__all__ = ["DigiKeyLists", "ListInputError", "join_designators"]
+__all__ = ["DigiKeyLists", "ListInputError", "fit_customer_reference",
+           "is_designator_list", "join_designators"]
 
-#: A customer reference longer than this is reported before it is sent.
-#: DigiKey publishes no limit; 48 is what its forum says fits the bag
-#: label, which is the reason the reference is sent at all.
-LABEL_REFERENCE_CHARS = 48
+#: What DigiKey keeps of a customer reference. Not published: observed
+#: live (58 characters sent, the first 48 stored), and the figure its
+#: forum gives for what fits the bag label.
+CUSTOMER_REFERENCE_CHARS = 48
+
+#: What a customer reference ends in when designators were left out.
+MORE_SUFFIX = ",+MORE"
+
+#: One reference designator: letters, a number, at most one letter after.
+_DESIGNATOR = re.compile(r"[A-Za-z_]{1,6}[0-9]+[A-Za-z]?")
 
 #: Parts sent in one request. DigiKey publishes no limit per request and
 #: says a list holds up to 1,000 parts.
 _ADD_BATCH = 50
 _READ_PAGE = 100
+
+#: The account's lists are read this many at a time, and reading stops
+#: after this many requests whether or not the end was reached.
+_LIST_PAGE = 100
+_LIST_MAX_PAGES = 20
+
+#: Where the orderable number of a list part is read from.
+_SKU_FIELD = ("Quantities[SelectedQuantityIndex].PackOptions"
+              "[SelectedPackOptionIndex].DigiKeyPartNumber")
 
 #: The fields of one item to add. Anything else is refused by name, so a
 #: ``comment`` cannot arrive and be mistaken for something to send.
@@ -103,6 +131,53 @@ def join_designators(designators: Any) -> str:
             seen.add(text.casefold())
             out.append(text)
     return ",".join(out)
+
+
+def fit_customer_reference(
+        designators: Any,
+        limit: int = CUSTOMER_REFERENCE_CHARS) -> tuple[str, list[str]]:
+    """A customer reference of at most ``limit`` characters.
+
+    Returns the reference and the designators left out of it. The
+    designators are joined by commas with no spaces, whatever they came
+    with, because a label has little room. When all of them fit, that
+    is the reference. Otherwise it keeps whole designators, from the
+    first on, and ends in ``,+MORE`` so that the label itself says some
+    are missing. Room for that ending is kept free, a designator is
+    never cut, and when not even the first fits the reference is
+    ``+MORE`` alone.
+    """
+    names = _designator_names(join_designators(designators))
+    compact = ",".join(names)
+    if len(compact) <= limit:
+        return compact, []
+    room = limit - len(MORE_SUFFIX)
+    kept: list[str] = []
+    for name in names:
+        if len(",".join(kept + [name])) > room:
+            break
+        kept.append(name)
+    if not kept:
+        return MORE_SUFFIX.lstrip(","), names
+    return ",".join(kept) + MORE_SUFFIX, names[len(kept):]
+
+
+def _designator_names(text: str) -> list[str]:
+    """The designators of a text: comma separated, or else by spaces."""
+    if "," in text:
+        return [n.strip() for n in text.split(",") if n.strip()]
+    return text.split()
+
+
+def is_designator_list(text: Any) -> bool:
+    """Whether ``text`` is reference designators and nothing else.
+
+    R1, C101, TP12, U3A, separated by commas or spaces. Anything else
+    ("Bag 7", "R1-R5", a project name) is a reference of the user's own
+    wording, which is not to be reworded here.
+    """
+    names = _designator_names(join_designators(text))
+    return bool(names) and all(_DESIGNATOR.fullmatch(n) for n in names)
 
 
 # ---- the token file ---------------------------------------------------------
@@ -209,10 +284,23 @@ def _part_summary(part: dict[str, Any]) -> dict[str, Any]:
     chosen = quantities[index] if 0 <= index < len(quantities) else \
         (quantities[0] if quantities else {})
     maker = part.get("Manufacturer")
+    # The packaging in the list is the selected pack option. The part's
+    # own DigiKeyPartNumber is the product's base number and names a
+    # packaging nobody chose.
+    options = _dicts(chosen.get("PackOptions"))
+    pick = to_int(chosen.get("SelectedPackOptionIndex"))
+    option = options[pick] \
+        if pick is not None and 0 <= pick < len(options) else {}
+    selected = str(option.get("DigiKeyPartNumber") or "")
     return {
         "unique_id": first_string(part, ("UniqueId",)),
         "requested_part_number": str(part.get("RequestedPartNumber") or ""),
-        "sku": str(part.get("DigiKeyPartNumber") or ""),
+        # Empty when DigiKey named no selected packaging: the orderable
+        # number is then not known, and the base number is not offered
+        # in its place.
+        "sku": selected,
+        "sku_source": _SKU_FIELD if selected else None,
+        "base_part_number": str(part.get("DigiKeyPartNumber") or ""),
         "manufacturer_part_number": str(
             part.get("ManufacturerPartNumber") or ""),
         "manufacturer": first_string(maker, ("Name",), ("Value",))
@@ -220,7 +308,8 @@ def _part_summary(part: dict[str, Any]) -> dict[str, Any]:
         "matched": flags.get("IsMatched"),
         "quantity": to_int(chosen.get("QuantityRequested")),
         "calculated_quantity": to_int(chosen.get("CalculatedQuantity")),
-        "pack_type": first_string(chosen, ("SelectedPackType",)) or None,
+        "pack_type": first_string(chosen, ("SelectedPackType",))
+        or first_string(option, ("PackType",)) or None,
         "quantities": [to_int(q.get("QuantityRequested"))
                        for q in quantities],
         # str() and nothing else: a reference is compared and reported
@@ -425,11 +514,53 @@ class DigiKeyLists(DistributorProvider):
 
     # ---- lists -------------------------------------------------------------
 
-    def lists(self, limit: int = 50) -> list[dict[str, Any]]:
-        reply = self._call("GET", "/lists",
-                           {"startIndex": 0, "limit": int(limit)},
-                           account=True)
-        return [_list_summary(entry) for entry in _dicts(reply)]
+    def all_lists(self) -> dict[str, Any]:
+        """Every list of the account, read page by page.
+
+        DigiKey answers with a bare array and no total, so the end is
+        the first empty page. ``complete`` is false, with ``incomplete``
+        saying why, when reading stopped anywhere else.
+        """
+        found: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        read = 0
+        incomplete = None
+        for _ in range(_LIST_MAX_PAGES):
+            page = _dicts(self._call(
+                "GET", "/lists", {"startIndex": read, "limit": _LIST_PAGE},
+                account=True))
+            if not page:
+                break
+            read += len(page)
+            fresh = []
+            for entry in page:
+                key = first_string(entry, ("Id",), ("ListId",))
+                if key and key in seen:
+                    continue
+                seen.add(key)
+                fresh.append(entry)
+            if not fresh:
+                incomplete = (
+                    f"DigiKey answered a later page with lists already "
+                    f"read; {len(found)} lists were read and there may be "
+                    "more")
+                break
+            found.extend(fresh)
+        else:
+            incomplete = (
+                f"stopped after {_LIST_MAX_PAGES} requests of {_LIST_PAGE} "
+                f"lists; {len(found)} lists were read and the account "
+                "may hold more")
+        out: dict[str, Any] = {
+            "lists": [_list_summary(entry) for entry in found],
+            "count": len(found), "complete": incomplete is None}
+        if incomplete:
+            out["incomplete"] = incomplete
+        return out
+
+    def lists(self) -> list[dict[str, Any]]:
+        """The lists alone. ``all_lists`` also says whether that is all."""
+        return self.all_lists()["lists"]
 
     def create_list(self, name: str,
                     visibility: str = "private") -> dict[str, Any]:
@@ -452,6 +583,13 @@ class DigiKeyLists(DistributorProvider):
             "ListSettings": {
                 "Visibility": level,
                 "PackagePreference": "EnteredPartNumber",
+                # The Swagger file marks nothing in ListSettings as
+                # required, but DigiKey refuses a list without this
+                # ("The ColumnPreferences field is required."). It is an
+                # array of {ColumnName, IsVisible}; the column names are
+                # not published, so none is named and DigiKey's own
+                # columns stand.
+                "ColumnPreferences": [],
                 "AutoCorrectQuantities": False,
                 "AttritionEnabled": False,
                 "AutoPopulateCref": False,
@@ -537,8 +675,22 @@ class DigiKeyLists(DistributorProvider):
                              "of 1 or more")
             designators = join_designators(item.get("designators"))
             customer = item.get("customer_reference")
-            customer = designators if customer is None \
-                else " ".join(str(customer).split())
+            given = customer is not None
+            omitted: list[str] = []
+            if given:
+                customer = " ".join(str(customer).split())
+            if not given or is_designator_list(customer):
+                customer, omitted = fit_customer_reference(
+                    customer if given else item.get("designators"))
+            elif len(customer) > CUSTOMER_REFERENCE_CHARS:
+                # The user's own wording: cutting it could change what
+                # it says, so it is refused, not shortened.
+                wrong.append(
+                    f"customer_reference is {len(customer)} characters "
+                    f"and DigiKey keeps {CUSTOMER_REFERENCE_CHARS}. It is "
+                    "not a list of reference designators, so it is not "
+                    "shortened here: give one of "
+                    f"{CUSTOMER_REFERENCE_CHARS} characters or fewer")
             reference = item.get("reference_designator")
             reference = designators if reference is None \
                 else " ".join(str(reference).split())
@@ -548,7 +700,9 @@ class DigiKeyLists(DistributorProvider):
                 continue
             ready.append({
                 "item": position, "sku": sku, "quantity": quantity,
+                "designators": designators,
                 "customer_reference": customer,
+                "customer_reference_omitted": omitted,
                 "reference_designator": reference,
                 "description": " ".join(
                     str(item.get("description") or "").split()),
@@ -609,6 +763,8 @@ class DigiKeyLists(DistributorProvider):
         (``check_products``) its sku is not a DigiKey part number. After
         sending, each item is found again in the list and its sku,
         quantity and both references are compared with what was sent.
+        An item counts as verified only when nothing differs and DigiKey
+        named the packaging it selected.
         """
         if not str(list_id or "").strip():
             raise ListInputError("which list: pass its list_id")
@@ -656,7 +812,7 @@ class DigiKeyLists(DistributorProvider):
             "list_id": str(list_id).strip(),
             "sent": sent,
             "added": len(fresh),
-            "verified": sum(1 for r in report if not r["differences"]),
+            "verified": sum(1 for r in report if r["verified"]),
             "items": report,
             "list_total": len(now),
         }
@@ -706,11 +862,13 @@ def _compare(sent: list[dict[str, Any]], fresh: list[dict[str, Any]],
         row: dict[str, Any] = {
             "item": entry["item"], "sku": entry["sku"],
             "quantity": entry["quantity"],
+            "designators": entry["designators"],
             "customer_reference": entry["customer_reference"],
             "reference_designator": entry["reference_designator"],
             "description": entry["description"],
         }
         differences = []
+        sku_verified = False
         if part is None:
             differences.append("not found in the list after adding")
         else:
@@ -719,10 +877,20 @@ def _compare(sent: list[dict[str, Any]], fresh: list[dict[str, Any]],
             if part["matched"] is False:
                 differences.append("DigiKey did not match this number to a "
                                    "product")
-            if part["sku"].casefold() != entry["sku"].casefold():
+            if not part["sku"]:
+                # Not a difference, and not a match either: the base
+                # number says nothing about the packaging.
+                row["sku_unverified"] = (
+                    "DigiKey named no selected packaging for this part, so "
+                    "the orderable number in the list is not known (its "
+                    f"base number is {part['base_part_number']!r})")
+            elif part["sku"].casefold() != entry["sku"].casefold():
                 differences.append(
-                    f"sku: sent {entry['sku']!r}, list holds "
-                    f"{part['sku']!r}")
+                    f"sku: sent {entry['sku']!r}, the packaging selected "
+                    f"in the list is {part['sku']!r}")
+            else:
+                sku_verified = True
+                row["sku_source"] = part["sku_source"]
             if part["quantity"] != entry["quantity"]:
                 differences.append(
                     f"quantity: sent {entry['quantity']}, list holds "
@@ -740,13 +908,17 @@ def _compare(sent: list[dict[str, Any]], fresh: list[dict[str, Any]],
                     f"description (kept in the part's notes): sent "
                     f"{entry['description']!r}, list holds {part['notes']!r}")
         row["differences"] = differences
-        if len(entry["customer_reference"]) > LABEL_REFERENCE_CHARS:
-            row["label_warning"] = (
-                f"the customer reference is "
-                f"{len(entry['customer_reference'])} characters. DigiKey "
-                f"publishes no limit; its forum says about "
-                f"{LABEL_REFERENCE_CHARS} fit a bag label. It was sent "
-                "whole.")
+        row["sku_verified"] = sku_verified
+        row["verified"] = sku_verified and not differences
+        omitted = entry["customer_reference_omitted"]
+        if omitted:
+            row["customer_reference_omitted"] = omitted
+            row["customer_reference_warning"] = (
+                f"DigiKey keeps {CUSTOMER_REFERENCE_CHARS} characters of a "
+                f"customer reference, so {len(omitted)} designator(s) were "
+                f"left out of it: {', '.join(omitted)}. It ends in +MORE "
+                "to say so on the label. The reference designator has "
+                "them all.")
         report.append(row)
     return report
 

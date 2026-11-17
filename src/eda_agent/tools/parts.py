@@ -386,18 +386,29 @@ def register_parts_tools(mcp):
         ``distributor_pn`` from part_search; it picks the packaging),
         ``quantity`` (whole, 1 or more) and ``designators`` (a list, or
         a string taken as written). The designators, all of them, comma
-        separated, become both the part's CustomerReference (DigiKey
-        prints it on the bag label) and its ReferenceDesignator;
-        ``customer_reference`` or ``reference_designator`` set one of
-        them otherwise. ``description`` is the component's Description
-        parameter, kept in the part's notes; ``manufacturer`` is
-        optional. No other field is accepted: a component's Comment is
-        never sent.
+        separated, become the part's ReferenceDesignator and, as far as
+        they fit, its CustomerReference (DigiKey prints it on the bag
+        label); ``customer_reference`` or ``reference_designator`` set
+        one of them otherwise. ``description`` is the component's
+        Description parameter, kept in the part's notes;
+        ``manufacturer`` is optional. No other field is accepted: a
+        component's Comment is never sent.
 
-        Nothing is shortened. DigiKey publishes no length limit, so a
-        reference is sent whole and compared with what the list then
-        holds; a reference over 48 characters, about what a label fits,
-        gets a ``label_warning``.
+        DigiKey keeps 48 characters of a CustomerReference and drops
+        the rest. So the designators go into it joined by commas with
+        no spaces (``R101,R102``): all of them when that fits in 48,
+        otherwise as many whole ones as fit before a closing
+        ``,+MORE`` (``+MORE`` alone when not even the first fits),
+        never part of one. The item then has
+        ``customer_reference_omitted`` (the designators left out) and
+        a ``customer_reference_warning``. Tell the user when that
+        happens. The ReferenceDesignator is sent whole and as given,
+        and ``designators`` in the result is that full text.
+
+        A ``customer_reference`` that is itself a designator list is
+        fitted the same way. Any other wording is sent as it is, and
+        refused, with nothing added, when it is over 48 characters:
+        it is not shortened here.
 
         Refused whole, with nothing added, when an item is malformed or
         its ``sku`` is not a DigiKey part number (``check_products``
@@ -407,9 +418,13 @@ def register_parts_tools(mcp):
         Returns:
             {"ok", "list_id", "sent", "added", "verified", "items",
             "list_total"}. Each item has what was sent, ``unique_id``,
-            ``digikey_description`` and ``differences`` (empty when the
-            list holds exactly what was sent). ``failed`` and
-            ``not_sent`` when DigiKey refused part of it.
+            ``digikey_description``, ``differences`` (empty when the
+            list holds exactly what was sent) and ``verified``.
+            ``sku_verified`` is true only when the packaging DigiKey
+            selected in the list has the ``sku`` that was sent;
+            ``sku_unverified`` says why when DigiKey named no selected
+            packaging. ``failed`` and ``not_sent`` when DigiKey refused
+            part of it.
         """
         return _list_call(provider, lambda lists: lists.add_items(
             list_id, items, check_products=check_products))
@@ -422,10 +437,17 @@ def register_parts_tools(mcp):
         """Read a saved parts list, or list the account's lists.
 
         With no ``list_id``: {"ok", "lists": [{list_id, name,
-        visibility, total_parts, ...}]}.
+        visibility, total_parts, ...}], "count", "complete"}. Every
+        list is read, page by page. ``complete`` false, with
+        ``incomplete`` saying why, means there may be more lists than
+        were returned: do not conclude from it that a list is absent.
 
         With one: the list and its ``items``, each with ``sku`` (the
-        DigiKey part number), ``quantity``, ``customer_reference`` and
+        orderable DigiKey number of the packaging selected in the list;
+        empty when DigiKey named none), ``base_part_number`` (DigiKey's
+        number for the product, often the reel whatever the packaging:
+        not the number to order by), ``pack_type``,
+        ``quantity``, ``customer_reference`` and
         ``reference_designator`` exactly as stored, ``notes`` (where
         part_list_add keeps the component's Description),
         ``digikey_description``, ``manufacturer``,
@@ -436,7 +458,6 @@ def register_parts_tools(mcp):
         def work(lists):
             if str(list_id or "").strip():
                 return lists.get_list(list_id)
-            found = lists.lists()
-            return {"lists": found, "count": len(found)}
+            return lists.all_lists()
 
         return _list_call(provider, work)

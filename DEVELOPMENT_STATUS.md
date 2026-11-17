@@ -9,16 +9,103 @@ out of any pull request meant for upstream.
 - Repository: `C:\Projects\eda-agent`, branch `feature/distributor-pricing`,
   tracking `origin` (the fork). `upstream` is the original project; nothing
   is pushed there.
-- Four commits sit on top of `e5f3469` (`upstream/main`, version 0.8.2):
+- Five commits sit on top of `e5f3469` (`upstream/main`, version 0.8.2):
   1. `f7b5769` "Add DigiKey and Mouser sourcing improvements" (session 1).
   2. `120e1f6` "Add compact purchasing BOM support" (session 2), pushed to
      `origin`.
   3. "Add Description to the purchasing BOM" (session 3), pushed to
      `origin`.
-  4. "Add DigiKey MyLists integration" (session 4), pushed to `origin`.
+  4. `5993b76` "Add DigiKey MyLists integration" (session 4), pushed to
+     `origin`.
+  5. "Fix DigiKey MyLists list creation and verify it live" (session 5),
+     pushed to `origin`.
 - No pull request has been opened.
 
-## Session 4: DigiKey MyLists (sign-in works, list creation fails live)
+## Session 5: DigiKey MyLists works live (create, add, read back)
+
+### Live result
+
+Run against the owner's DigiKey account on 2026-11-16, with the owner's
+approval for one test list and one test part.
+
+- **List creation works.** The 400 from session 4 was DigiKey requiring
+  `ListSettings.ColumnPreferences`, which its Swagger file does not mark as
+  required. Sending an empty array (`[]`) is accepted. A private list named
+  `EDA Agent API Test` was created on the first attempt.
+- **Adding a part works.** One part was added on the first attempt: the
+  cut-tape number of a 10 kΩ 0603 resistor, quantity 10, ten designators,
+  and a description marked as test data.
+- **Read-back:** requested number, quantity, notes, manufacturer, MPN and
+  `ReferenceDesignator` (58 characters) came back exactly as sent.
+  `CustomerReference` came back cut to its first 48 characters.
+- The test list and its one part are still in the account. No tool deletes
+  a list; remove it on DigiKey's site when it is no longer wanted.
+
+### What the live run showed, and what changed because of it
+
+- **Exact SKU.** A list part's own `DigiKeyPartNumber` is the product's
+  base number (the reel, for this part), whatever packaging was entered.
+  The packaging in the list is
+  `Quantities[SelectedQuantityIndex].PackOptions[SelectedPackOptionIndex]`,
+  and that entry's `DigiKeyPartNumber` is the orderable number. `sku` is now
+  read from there and the base number is returned as `base_part_number`. An
+  item is `verified` only when the selected number is the one sent; when
+  DigiKey names no selected packaging it is not verified and
+  `sku_unverified` says why.
+- **All lists.** `part_list_get` without a list id returned 50 of the
+  account's 84 lists and did not say so. It now reads 100 at a time until
+  an empty page, at most 20 requests, and returns `complete`, with
+  `incomplete` giving the reason when it stopped early. `startIndex` is an
+  item offset (checked read-only).
+- **Customer reference.** Because DigiKey keeps 48 characters, the
+  designators go in joined by commas without spaces: all of them when they
+  fit, otherwise as many whole ones as fit before a closing `,+MORE`
+  (`+MORE` alone when not even the first fits). The designators left out
+  are returned in `customer_reference_omitted` with a
+  `customer_reference_warning`; `designators` in the result and DigiKey's
+  `ReferenceDesignator` keep the full text as given. A `customer_reference`
+  given outright is fitted the same way only when it is a designator list;
+  any other wording over 48 characters is refused, not shortened.
+
+### Files
+
+- `src/eda_agent/libimport/providers/digikey_lists.py`
+- `src/eda_agent/tools/parts.py` (docstrings, and `part_list_get` returns
+  the paged result)
+- `tests/test_digikey_lists.py` (53 tests)
+- `docs/PART_SOURCING.md`, `DEVELOPMENT_STATUS.md`
+
+No DelphiScript change and no bridge redeployment.
+
+### Test results
+
+Only `tests/test_digikey_lists.py` was run for the final change: 53 passed.
+
+### Remaining limitations
+
+- **The 48-character limit is one observation**, not a published figure,
+  and it is what DigiKey's forum gives for the bag label. It is one
+  constant, `CUSTOMER_REFERENCE_CHARS`.
+- **The `,+MORE` form has not been sent to DigiKey.** It was written after
+  the live run and is covered by offline tests only. The test part in the
+  account still holds the cut value from before.
+- **Privacy is not confirmed.** The list was requested as `Private`. The
+  all-lists endpoint reports `private`, but it reports that for every list
+  in the account. The single-list endpoint reports `readOnly`, and reports
+  `readOnly` or `readWrite` for the owner's other lists, never private. The
+  API has no call to change it. Check the list's sharing on DigiKey's site.
+- **Whether the customer reference reaches the bag label** is still known
+  only from DigiKey's forum.
+- A designator is recognised as up to six letters, digits and at most one
+  trailing letter. A given `customer_reference` with names such as `J1_2`
+  counts as free wording.
+- The MCP server must be reconnected to load this code.
+
+## Session 4: DigiKey MyLists (as first written; see session 5)
+
+Session 5 changed the reference handling and the SKU check described
+here and resolved the failing list creation. Where the two disagree,
+session 5 is current.
 
 ### Completed
 
@@ -431,8 +518,10 @@ the `distributor_pn`, not the ref.
 
 ## Next steps for the next session
 
-1. Run `git status` and `git log --oneline -3`; confirm the branch is
-   `feature/distributor-pricing` with the two commits above and a clean tree.
+1. Run `git status` and `git log --oneline -5`; confirm the branch is
+   `feature/distributor-pricing` with the five commits above and a clean
+   tree. For DigiKey MyLists, start from "Remaining limitations" under
+   session 5.
 2. Restart the altium MCP server so it loads the purchasing BOM code (reconnect
    it with `/mcp`, or restart Claude Code).
 3. Call `proj_get_bom` with `mode="purchasing"` and the SensorBoard project
