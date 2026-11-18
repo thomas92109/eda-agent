@@ -7825,16 +7825,18 @@ def register_pcb_tools(mcp):
         material, thickness_mil, thickness_mm, dielectric_constant.
 
         Args:
-            output_path: Destination .csv file. Defaults to
-                ``workspace/<board>_stackup.csv``.
+            output_path: Destination .csv file, used as given (a name that
+                exists is never replaced: the new file gets the local
+                time before its extension, then ``_2``, ``_3``; a path
+                inside the public repository is refused). Empty writes
+                ``stackup/<board>_stackup.csv`` in the export folder
+                (EDA_AGENT_EXPORT_DIR, else EDA Agent/exports under the
+                user's home), under the first free name.
 
         Returns:
             {"output_path", "rows", "layer_count", "total_thickness_mils"} or
             an error dict if the board / stackup could not be read.
         """
-        from pathlib import Path
-
-        from ..config import get_config
         from ..export.stackup_csv import (
             format_stackup_csv,
             stackup_total_thickness_mils,
@@ -7847,15 +7849,21 @@ def register_pcb_tools(mcp):
             return {"success": False,
                     "error": "could not read layer stackup (open a .PcbDoc)"}
 
+        from ..export.destination import (
+            ExportPathError,
+            claimed,
+            export_file,
+        )
+
         csv_text = format_stackup_csv(stackup)
-        if output_path:
-            out = Path(output_path)
-        else:
-            board = str(stackup.get("board_name") or "board").strip() or "board"
-            safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in board)
-            out = get_config().workspace_dir / f"{safe}_stackup.csv"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(csv_text, encoding="utf-8")
+        board = str(stackup.get("board_name") or "board").strip() or "board"
+        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in board)
+        try:
+            out = export_file(output_path, "stackup", f"{safe}_stackup.csv")
+        except ExportPathError as exc:
+            return {"success": False, "error": str(exc)}
+        with claimed([out]):
+            out.write_text(csv_text, encoding="utf-8")
 
         # rows = data rows (exclude the header line).
         rows = max(0, csv_text.count("\n") - 1)

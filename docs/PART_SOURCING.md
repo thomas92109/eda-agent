@@ -227,6 +227,97 @@ only when its variant entry states one.
 stopped at `limit` with components left over (`truncated`), or when Altium
 returned part of the project empty; `incomplete_reason` says which.
 
+## The purchasing BOM as a CSV file
+
+`proj_export_purchasing_bom_csv` writes the same BOM to a CSV file. It reads
+the project the way `proj_get_bom(mode="purchasing")` does and writes Altium's
+own values with Python's `csv` module: nothing is retyped, guessed, merged or
+shortened, and every reference designator is kept. It contacts no distributor
+and changes no Altium document. The reply is counts and warnings, never the BOM.
+
+**Columns.** Left out, `columns` gives exactly these five, in this order:
+
+`Quantity`, `Part Number`, `Description`, `Manufacturer`, `Reference Designator`
+
+Pass `columns` for another selection. It is an ordered list of identifiers, and
+the file has exactly those columns in that order:
+
+| Identifier | Header |
+|---|---|
+| `quantity` | Quantity |
+| `part_number` | Part Number |
+| `description` | Description |
+| `manufacturer` | Manufacturer |
+| `reference_designators` | Reference Designator |
+| `footprint` | Footprint (a line on several footprints lists them all) |
+| `fitted_status` | Fitted / DNP Status |
+
+An unknown, repeated or empty selection is refused and nothing is written.
+Identifiers are matched exactly.
+
+**DNP parts.** Left out by default, and the default five columns are exactly
+as above. With `include_dnp=True` each not-fitted part is on a row of its own
+with status `DNP` and `Quantity` 0: it is listed, not bought. Only the
+not-fitted designators of that part are on the row. Because a DNP row must
+never pass for a part to buy, `include_dnp=True` requires `fitted_status` in
+`columns`. Without it, the default five included, the call is refused before
+Altium is read, and no column is ever added for you. This reads the project a
+second time, with the same variant, so the fitted rows are the ones the
+default export writes.
+
+**What Altium says each excluded part is.** Three different things keep a
+part out of the file, and they are counted apart in `totals`, from Altium's
+own lists and never inferred:
+
+| `totals` field | Meaning |
+|---|---|
+| `not_fitted_components` | DNP: the variant does not fit them |
+| `not_in_bom_components` | Fitted, but their Component Kind (Altium's Not in BOM setting) keeps them out |
+| `unresolved_components` | Fitted, but without a usable `Manufacturer` or `Part Number` |
+
+With `include_dnp` the not-fitted parts are divided further: `dnp_components`
+(on a DNP row), `dnp_not_in_bom_components` (not fitted and also kept out by
+Component Kind, so with no row), `dnp_unresolved_components` and
+`dnp_unclassified_components` (in none of Altium's lists). Those last three are
+`null` when the not-fitted parts were not read. Each group without a row is
+named in `warnings`.
+
+**Where it goes, and never over an old file.** The file is written to the
+`bom` folder of the export folder (`EDA_AGENT_EXPORT_DIR`, else
+`EDA Agent/exports` under the user's home) as `<project>_purchasing_BOM.csv`.
+A path given in `output_path` is used as given, and refused when it is inside
+the public repository. The naming rule is the same for both, and is shared by
+the netlist, variant matrix, stackup and JLC assembly exports:
+
+| The name | What is written |
+|---|---|
+| is free | `DemoBoard_purchasing_BOM.csv` |
+| exists | `DemoBoard_purchasing_BOM_20261117_153000.csv` (local time, before the extension) |
+| and that exists too | `DemoBoard_purchasing_BOM_20261117_153000_2.csv`, then `_3`, and so on |
+
+A JLC assembly export writes two files, and they always share one suffix: if
+either `<board>_BOM_JLCPCB.csv` or `<board>_CPL_JLCPCB.csv` exists, both are
+written with the same stamp (and the same `_2`, `_3`). The file is created
+exclusively, so even one that appears between choosing the name and writing is
+not replaced; a write that fails removes the file it had created. When the
+name differs from the one asked for, `warnings` says so.
+
+**What it will not write quietly.** A read cut short (`complete` false) is
+refused unless `allow_incomplete=True`, and then `warnings` says the quantities
+may be short. Fitted components with no usable `Manufacturer` or `Part Number`,
+components kept out of the BOM by their Component Kind, and every
+inconsistency Altium reports are named in `warnings`: they are not in the file.
+After writing, the rows' quantities are checked against Altium's counts.
+
+**Spreadsheets.** The file is UTF-8 with a byte order mark and CRLF line ends,
+so Excel opens it directly. A cell that starts with `=`, `+`, `-` or `@` (or a
+tab or line break) would be run as a formula, so it gets a leading apostrophe;
+that is the only change made to any value, and `warnings` counts it. Excel
+also reinterprets some values when it opens a CSV directly: a part number
+`0012345678` loses its zeros, `1E5` becomes a number, `5-1` a date. The file holds
+the exact text; `warnings` counts such cells, and importing the column as Text
+(Data > From Text/CSV) keeps them.
+
 ## Saved lists in a DigiKey account (MyLists)
 
 Four tools put parts into a DigiKey saved list and read it back. A list is

@@ -534,6 +534,7 @@ GAPS: dict[str, str] = {
     "pcb_find_dominant_rule": "per-item rule resolution has no API; not written from files",
     "pcb_check_rule_scope": "rule condition evaluation not written",
     "proj_export_jlc_assembly": "JLC column layout not written; kicad_export_pos writes KiCad's",
+    "proj_export_purchasing_bom_csv": "purchasing BOM CSV reads Altium's schematic parameters; no KiCad tool writes it yet",
     "sch_place_image": "embedded image placement not written",
     "sch_autoposition_labels": "label placement not written",
     "sch_optimize_wires": "wire merging not written",
