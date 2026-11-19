@@ -30,6 +30,7 @@ README = ROOT / "README.md"
 BACKENDS = ROOT / "docs" / "BACKENDS.md"
 PART_SOURCING = ROOT / "docs" / "PART_SOURCING.md"
 TOOL_REFERENCE = ROOT / "docs" / "TOOL_REFERENCE.md"
+INSTALL = ROOT / "docs" / "INSTALL.md"
 
 #: Everything a reader is expected to find their answer in. Order is the
 #: reading order, not a priority.
@@ -37,6 +38,7 @@ DOC_FILES: tuple[pathlib.Path, ...] = (
     README,
     BACKENDS,
     PART_SOURCING,
+    INSTALL,
     TOOL_REFERENCE,
 )
 
@@ -44,7 +46,8 @@ DOC_FILES: tuple[pathlib.Path, ...] = (
 #: from the code, so a claim in it cannot be wrong about the code, and
 #: including it would let a generated mention satisfy a guard that meant
 #: to check what a human wrote.
-PROSE_FILES: tuple[pathlib.Path, ...] = (README, BACKENDS, PART_SOURCING)
+PROSE_FILES: tuple[pathlib.Path, ...] = (README, BACKENDS, PART_SOURCING,
+                                         INSTALL)
 
 
 def _read(paths) -> str:

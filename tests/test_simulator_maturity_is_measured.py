@@ -105,32 +105,66 @@ def _commands_by_tool() -> dict[str, list[str]]:
 
     A send in a module-level helper the tool calls by name counts for the
     tool: sch_place_components lost its focus command from this view when
-    that moved into _focus_sheet, though the tool still sends it.
+    that moved into _focus_sheet, though the tool still sends it. So does a
+    helper imported from another module of this folder: the purchasing
+    tools read the BOM through ``purchasing_bom_of_project`` in project.py,
+    and seeing only their own ``project.get_focused`` made them look
+    covered when the BOM commands they depend on are not simulated.
     """
     out: dict[str, list[str]] = {}
+    trees: dict[str, ast.Module] = {}
     for path in sorted(TOOLS_DIR.glob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+            trees[path.stem] = ast.parse(
+                path.read_text(encoding="utf-8", errors="replace"))
         except SyntaxError:  # pragma: no cover - caught by the parse guard
             continue
-        helpers = {node.name: node for node in tree.body
-                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    helpers = {stem: {node.name: node for node in tree.body
+                      if isinstance(node, (ast.FunctionDef,
+                                           ast.AsyncFunctionDef))}
+               for stem, tree in trees.items()}
+    imported = {stem: _sibling_imports(tree) for stem, tree in trees.items()}
+
+    def resolve(stem: str, name: str):
+        if name in helpers[stem]:
+            return stem, name
+        other = imported[stem].get(name)
+        if other and other[1] in helpers.get(other[0], {}):
+            return other
+        return None
+
+    for stem, tree in trees.items():
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if tool_metadata(fn.name)["category"] == "other":
                 continue
             cmds = _literal_sends(fn)
-            seen, todo = set(), list(_called_names(fn))
+            seen: set = set()
+            todo = [(stem, n) for n in _called_names(fn)]
             while todo:
-                name = todo.pop()
-                if name in seen or name not in helpers:
+                target = resolve(*todo.pop())
+                if target is None or target in seen:
                     continue
-                seen.add(name)
-                cmds |= _literal_sends(helpers[name])
-                todo.extend(_called_names(helpers[name]))
+                seen.add(target)
+                helper = helpers[target[0]][target[1]]
+                cmds |= _literal_sends(helper)
+                todo.extend((target[0], n) for n in _called_names(helper))
             if cmds:
                 out[fn.name] = sorted(cmds)
+    return out
+
+
+def _sibling_imports(tree: ast.Module) -> dict[str, tuple[str, str]]:
+    """``from .other import helper`` anywhere in a tools module (inside a
+    function included, as the purchasing tools do), by the local name:
+    ``{local name: (module in this folder, name in it)}``."""
+    out: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.ImportFrom) and node.level == 1
+                and node.module and "." not in node.module):
+            for alias in node.names:
+                out[alias.asname or alias.name] = (node.module, alias.name)
     return out
 
 
@@ -168,6 +202,20 @@ def _measure() -> tuple[set[str], set[str], dict[str, list[str]]]:
     return full, catch_all, sends
 
 
+#: Tools whose every command the simulator answers, but whose answers lack
+#: what the tool computes from, so running one there gives a wrong result
+#: rather than an error. Answering is the measurement; it is not enough to
+#: publish a label that promises the tool can be tried without Altium.
+#: Each reason was checked by running the tool against the simulator.
+_ANSWERED_BUT_NOT_FAITHFUL = {
+    "sch_preview_template": (
+        "library.get_pin_list answers with each pin's designator and name "
+        "only, no position, orientation or length. The template builder "
+        "then places every pin at one point and reports a two-pin resistor "
+        "as a short (R1.1 and R1.2 on one net) with ok: true."),
+}
+
+
 def _as_source(names) -> str:
     """The measured set formatted exactly as the source literal."""
     import textwrap
@@ -181,6 +229,7 @@ def _as_source(names) -> str:
 
 def test_simulator_label_matches_the_simulator():
     measured, _catch_all, sends = _measure()
+    measured -= set(_ANSWERED_BUT_NOT_FAITHFUL)
 
     assert len(sends) > 250, (
         f"only {len(sends)} tools found sending a literal bridge command; "
@@ -210,6 +259,22 @@ def test_simulator_label_matches_the_simulator():
     assert not detail, (
         "_SIMULATOR_TOOLS in tools/metadata.py disagrees with the "
         "simulator.\n\n" + "\n\n".join(detail))
+
+
+def test_the_unfaithful_exclusions_are_still_needed_and_never_published():
+    """An exclusion that no longer matches a measured tool is stale: remove
+    it. One that is published would claim what the reason above denies."""
+    measured, _catch_all, _sends = _measure()
+    stale = sorted(set(_ANSWERED_BUT_NOT_FAITHFUL) - measured)
+    assert not stale, (
+        f"{stale} are no longer measured as fully answered, so their "
+        f"exclusion from _SIMULATOR_TOOLS is dead; remove it")
+    published = sorted(set(_ANSWERED_BUT_NOT_FAITHFUL) & _SIMULATOR_TOOLS)
+    assert not published, (
+        f"{published} are in _SIMULATOR_TOOLS although the simulator's "
+        f"answers are not faithful enough to run them")
+    for tool in _ANSWERED_BUT_NOT_FAITHFUL:
+        assert tool_metadata(tool)["maturity"] != "simulator"
 
 
 def test_partial_coverage_is_not_counted_as_coverage():
@@ -260,7 +325,7 @@ def test_the_absent_action_probe_is_actually_absent():
 
 @pytest.mark.parametrize("name", [
     # Answered by a real per-action handler.
-    "app_get_version", "proj_get_bom", "lib_add_pins", "obj_query",
+    "app_get_version", "proj_get_stats", "lib_add_pins", "obj_query",
 ])
 def test_known_covered_tools_are_labelled_simulator(name):
     assert tool_metadata(name)["maturity"] == "simulator"
@@ -271,6 +336,11 @@ def test_known_covered_tools_are_labelled_simulator(name):
     "audit_find_acute_angles", "audit_variant_not_fitted",
     # PCB work the simulator has no handler for.
     "pcb_apply_dnp_paste_exclusion",
+    # Its purchasing mode sends project.get_active_variant and
+    # project.get_component_info_batch, which the simulator does not
+    # implement, and the purchasing tools read the BOM through it.
+    "proj_get_bom", "part_purchasing_export_csv",
+    "part_purchasing_mpn_decisions",
 ])
 def test_uncovered_tools_are_not_labelled_simulator(name):
     assert tool_metadata(name)["maturity"] != "simulator"

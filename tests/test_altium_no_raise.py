@@ -92,6 +92,19 @@ _SET_ASIDE = {
     "lib_extract_intlib": "runs an external extractor",
     "part_search": "reaches distributor networks",
     "part_fetch": "reaches distributor networks",
+    "part_list_login": "reaches DigiKey and writes the sign-in file",
+    "part_list_create": "writes to a DigiKey account",
+    "part_list_add": "writes to a DigiKey account",
+    "part_list_get": "reaches DigiKey",
+    "part_cart_create": "writes a cart at Mouser",
+    "part_cart_add": "writes a cart at Mouser",
+    "part_cart_get": "reaches Mouser",
+    "part_purchasing_analyze": "reaches distributor networks",
+    "part_purchasing_plan": "reaches distributor networks",
+    "part_purchasing_export_csv": "reaches distributor networks and writes a file",
+    "part_purchasing_cart_prepare": "reaches distributor networks",
+    "part_purchasing_mpn_decisions": "reaches distributor networks and writes a decisions file",
+    "part_purchasing_cart_commit": "writes a list or cart at a distributor",
 }
 _NAMES = sorted(n for n in _TOOLS if n not in _SET_ASIDE)
 

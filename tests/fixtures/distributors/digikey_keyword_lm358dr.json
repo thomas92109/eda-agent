@@ -1,0 +1,1002 @@
+{
+ "Products": [
+  {
+   "Description": {
+    "ProductDescription": "IC OP AMP 2CH 8-SOIC",
+    "DetailedDescription": "Standard (General Purpose) Amplifier 2 Circuit 8-SOIC"
+   },
+   "Manufacturer": {
+    "Id": 296,
+    "Name": "Texas Instruments"
+   },
+   "ManufacturerProductNumber": "LM358DR",
+   "UnitPrice": 0.26,
+   "ProductUrl": "https://www.digikey.com/en/products/detail/texas-instruments/LM358DR/276658",
+   "DatasheetUrl": "https://www.ti.com/general/docs/suppproductinfo.tsp?distId=10&gotoUrl=https%3A%2F%2Fwww.ti.com%2Flit%2Fgpn%2Flm358",
+   "ProductVariations": [
+    {
+     "DigiKeyProductNumber": "296-LM358DRTR-ND",
+     "PackageType": {
+      "Id": 1,
+      "Name": "Tape & Reel (TR)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 2500,
+       "UnitPrice": 0.10436,
+       "TotalPrice": 260.9
+      },
+      {
+       "BreakQuantity": 5000,
+       "UnitPrice": 0.10101,
+       "TotalPrice": 505.05
+      },
+      {
+       "BreakQuantity": 7500,
+       "UnitPrice": 0.09933,
+       "TotalPrice": 744.975
+      },
+      {
+       "BreakQuantity": 12500,
+       "UnitPrice": 0.09748,
+       "TotalPrice": 1218.5
+      },
+      {
+       "BreakQuantity": 17500,
+       "UnitPrice": 0.09639,
+       "TotalPrice": 1686.825
+      },
+      {
+       "BreakQuantity": 25000,
+       "UnitPrice": 0.09535,
+       "TotalPrice": 2383.75
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": false,
+     "Supplier": {
+      "Id": 296,
+      "Name": "Texas Instruments"
+     },
+     "QuantityAvailableforPackageType": 72199,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 2500,
+     "StandardPackage": 2500,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "296-LM358DRCT-ND",
+     "PackageType": {
+      "Id": 2,
+      "Name": "Cut Tape (CT)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.26,
+       "TotalPrice": 0.26
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.175,
+       "TotalPrice": 1.75
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.1544,
+       "TotalPrice": 3.86
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.1322,
+       "TotalPrice": 13.22
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.12156,
+       "TotalPrice": 30.39
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.11518,
+       "TotalPrice": 57.59
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.10991,
+       "TotalPrice": 109.91
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": false,
+     "Supplier": {
+      "Id": 296,
+      "Name": "Texas Instruments"
+     },
+     "QuantityAvailableforPackageType": 72199,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "296-LM358DRDKR-ND",
+     "PackageType": {
+      "Id": 243,
+      "Name": "Digi-Reel\u00ae"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.26,
+       "TotalPrice": 0.26
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.175,
+       "TotalPrice": 1.75
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.1544,
+       "TotalPrice": 3.86
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.1322,
+       "TotalPrice": 13.22
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.12156,
+       "TotalPrice": 30.39
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.11518,
+       "TotalPrice": 57.59
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.10991,
+       "TotalPrice": 109.91
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": false,
+     "Supplier": {
+      "Id": 296,
+      "Name": "Texas Instruments"
+     },
+     "QuantityAvailableforPackageType": 72199,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 7.0
+    }
+   ],
+   "QuantityAvailable": 72199,
+   "ProductStatus": {
+    "Id": 0,
+    "Status": "Active"
+   },
+   "BackOrderNotAllowed": false,
+   "NormallyStocking": true,
+   "Discontinued": false,
+   "EndOfLife": false,
+   "Ncnr": false,
+   "BaseProductNumber": {
+    "Id": 376,
+    "Name": "LM358"
+   },
+   "ManufacturerLeadWeeks": "26",
+   "ManufacturerPublicQuantity": 0,
+   "Classifications": {
+    "ReachStatus": "REACH Unaffected",
+    "RohsStatus": "ROHS3 Compliant",
+    "MoistureSensitivityLevel": "1  (Unlimited)",
+    "ExportControlClassNumber": "EAR99",
+    "HtsusCode": "8542.33.0001"
+   }
+  },
+  {
+   "Description": {
+    "ProductDescription": "IC OP AMP 2CH 8-SOIC",
+    "DetailedDescription": "Standard (General Purpose) Amplifier 2 Circuit 8-SOIC"
+   },
+   "Manufacturer": {
+    "Id": 488,
+    "Name": "onsemi"
+   },
+   "ManufacturerProductNumber": "LM358DR2G",
+   "UnitPrice": 0.26,
+   "ProductUrl": "https://www.digikey.com/en/products/detail/onsemi/LM358DR2G/661123",
+   "DatasheetUrl": "https://www.onsemi.com/pdf/datasheet/lm358-d.pdf",
+   "ProductVariations": [
+    {
+     "DigiKeyProductNumber": "LM358DR2GOSTR-ND",
+     "PackageType": {
+      "Id": 1,
+      "Name": "Tape & Reel (TR)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 2500,
+       "UnitPrice": 0.10702,
+       "TotalPrice": 267.55
+      },
+      {
+       "BreakQuantity": 5000,
+       "UnitPrice": 0.1036,
+       "TotalPrice": 518.0
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 488,
+      "Name": "onsemi"
+     },
+     "QuantityAvailableforPackageType": 65000,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 2500,
+     "StandardPackage": 2500,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "LM358DR2GOSCT-ND",
+     "PackageType": {
+      "Id": 2,
+      "Name": "Cut Tape (CT)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.26,
+       "TotalPrice": 0.26
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.179,
+       "TotalPrice": 1.79
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.158,
+       "TotalPrice": 3.95
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.1354,
+       "TotalPrice": 13.54
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.1246,
+       "TotalPrice": 31.15
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.11806,
+       "TotalPrice": 59.03
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.11269,
+       "TotalPrice": 112.69
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 488,
+      "Name": "onsemi"
+     },
+     "QuantityAvailableforPackageType": 66959,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "LM358DR2GOSDKR-ND",
+     "PackageType": {
+      "Id": 243,
+      "Name": "Digi-Reel\u00ae"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.26,
+       "TotalPrice": 0.26
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.179,
+       "TotalPrice": 1.79
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.158,
+       "TotalPrice": 3.95
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.1354,
+       "TotalPrice": 13.54
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.1246,
+       "TotalPrice": 31.15
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.11806,
+       "TotalPrice": 59.03
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.11269,
+       "TotalPrice": 112.69
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 488,
+      "Name": "onsemi"
+     },
+     "QuantityAvailableforPackageType": 66959,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 7.0
+    }
+   ],
+   "QuantityAvailable": 66959,
+   "ProductStatus": {
+    "Id": 0,
+    "Status": "Active"
+   },
+   "BackOrderNotAllowed": false,
+   "NormallyStocking": true,
+   "Discontinued": false,
+   "EndOfLife": false,
+   "Ncnr": false,
+   "BaseProductNumber": {
+    "Id": 376,
+    "Name": "LM358"
+   },
+   "ManufacturerLeadWeeks": "10",
+   "ManufacturerPublicQuantity": 5237500,
+   "Classifications": {
+    "ReachStatus": "REACH Unaffected",
+    "RohsStatus": "ROHS3 Compliant",
+    "MoistureSensitivityLevel": "1  (Unlimited)",
+    "ExportControlClassNumber": "EAR99",
+    "HtsusCode": "8542.33.0001"
+   }
+  },
+  {
+   "Description": {
+    "ProductDescription": "IC OP AMP 2CH 8-SOIC",
+    "DetailedDescription": "Standard (General Purpose) Amplifier 2 Circuit 8-SOIC"
+   },
+   "Manufacturer": {
+    "Id": 846,
+    "Name": "Rohm Semiconductor"
+   },
+   "ManufacturerProductNumber": "LM358DR",
+   "UnitPrice": 0.68,
+   "ProductUrl": "https://www.digikey.com/en/products/detail/rohm-semiconductor/LM358DR/1878950",
+   "DatasheetUrl": "//mm.digikey.com/Volume0/opasdata/d220001/medias/docus/705/LM324%2C358%2C2902%2C2904.pdf",
+   "ProductVariations": [
+    {
+     "DigiKeyProductNumber": "LM358DRTR-ND",
+     "PackageType": {
+      "Id": 1,
+      "Name": "Tape & Reel (TR)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 2500,
+       "UnitPrice": 0.31039,
+       "TotalPrice": 775.975
+      },
+      {
+       "BreakQuantity": 5000,
+       "UnitPrice": 0.30216,
+       "TotalPrice": 1510.8
+      },
+      {
+       "BreakQuantity": 7500,
+       "UnitPrice": 0.29803,
+       "TotalPrice": 2235.225
+      },
+      {
+       "BreakQuantity": 12500,
+       "UnitPrice": 0.29346,
+       "TotalPrice": 3668.25
+      },
+      {
+       "BreakQuantity": 17500,
+       "UnitPrice": 0.29079,
+       "TotalPrice": 5088.825
+      },
+      {
+       "BreakQuantity": 25000,
+       "UnitPrice": 0.28822,
+       "TotalPrice": 7205.5
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 846,
+      "Name": "Rohm Semiconductor"
+     },
+     "QuantityAvailableforPackageType": 0,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 2500,
+     "StandardPackage": 2500,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "LM358DRCT-ND",
+     "PackageType": {
+      "Id": 2,
+      "Name": "Cut Tape (CT)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.68,
+       "TotalPrice": 0.68
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.483,
+       "TotalPrice": 4.83
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.4336,
+       "TotalPrice": 10.84
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.3788,
+       "TotalPrice": 37.88
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.35272,
+       "TotalPrice": 88.18
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.337,
+       "TotalPrice": 168.5
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.32406,
+       "TotalPrice": 324.06
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 846,
+      "Name": "Rohm Semiconductor"
+     },
+     "QuantityAvailableforPackageType": 1395,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "LM358DRDKR-ND",
+     "PackageType": {
+      "Id": 243,
+      "Name": "Digi-Reel\u00ae"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.68,
+       "TotalPrice": 0.68
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.483,
+       "TotalPrice": 4.83
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.4336,
+       "TotalPrice": 10.84
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.3788,
+       "TotalPrice": 37.88
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.35272,
+       "TotalPrice": 88.18
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.337,
+       "TotalPrice": 168.5
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.32406,
+       "TotalPrice": 324.06
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 846,
+      "Name": "Rohm Semiconductor"
+     },
+     "QuantityAvailableforPackageType": 1395,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 7.0
+    }
+   ],
+   "QuantityAvailable": 1395,
+   "ProductStatus": {
+    "Id": 7,
+    "Status": "Not For New Designs"
+   },
+   "BackOrderNotAllowed": false,
+   "NormallyStocking": true,
+   "Discontinued": false,
+   "EndOfLife": false,
+   "Ncnr": false,
+   "BaseProductNumber": {
+    "Id": 376,
+    "Name": "LM358"
+   },
+   "ManufacturerLeadWeeks": "7",
+   "ManufacturerPublicQuantity": 0,
+   "Classifications": {
+    "ReachStatus": "REACH Unaffected",
+    "RohsStatus": "ROHS3 Compliant",
+    "MoistureSensitivityLevel": "1  (Unlimited)",
+    "ExportControlClassNumber": "EAR99",
+    "HtsusCode": "8542.33.0001"
+   }
+  }
+ ],
+ "ProductsCount": 8,
+ "ExactMatches": [
+  {
+   "Description": {
+    "ProductDescription": "IC OP AMP 2CH 8-SOIC",
+    "DetailedDescription": "Standard (General Purpose) Amplifier 2 Circuit 8-SOIC"
+   },
+   "Manufacturer": {
+    "Id": 296,
+    "Name": "Texas Instruments"
+   },
+   "ManufacturerProductNumber": "LM358DR",
+   "UnitPrice": 0.26,
+   "ProductUrl": "https://www.digikey.com/en/products/detail/texas-instruments/LM358DR/276658",
+   "DatasheetUrl": "https://www.ti.com/general/docs/suppproductinfo.tsp?distId=10&gotoUrl=https%3A%2F%2Fwww.ti.com%2Flit%2Fgpn%2Flm358",
+   "ProductVariations": [
+    {
+     "DigiKeyProductNumber": "296-LM358DRTR-ND",
+     "PackageType": {
+      "Id": 1,
+      "Name": "Tape & Reel (TR)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 2500,
+       "UnitPrice": 0.10436,
+       "TotalPrice": 260.9
+      },
+      {
+       "BreakQuantity": 5000,
+       "UnitPrice": 0.10101,
+       "TotalPrice": 505.05
+      },
+      {
+       "BreakQuantity": 7500,
+       "UnitPrice": 0.09933,
+       "TotalPrice": 744.975
+      },
+      {
+       "BreakQuantity": 12500,
+       "UnitPrice": 0.09748,
+       "TotalPrice": 1218.5
+      },
+      {
+       "BreakQuantity": 17500,
+       "UnitPrice": 0.09639,
+       "TotalPrice": 1686.825
+      },
+      {
+       "BreakQuantity": 25000,
+       "UnitPrice": 0.09535,
+       "TotalPrice": 2383.75
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": false,
+     "Supplier": {
+      "Id": 296,
+      "Name": "Texas Instruments"
+     },
+     "QuantityAvailableforPackageType": 72199,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 2500,
+     "StandardPackage": 2500,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "296-LM358DRCT-ND",
+     "PackageType": {
+      "Id": 2,
+      "Name": "Cut Tape (CT)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.26,
+       "TotalPrice": 0.26
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.175,
+       "TotalPrice": 1.75
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.1544,
+       "TotalPrice": 3.86
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.1322,
+       "TotalPrice": 13.22
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.12156,
+       "TotalPrice": 30.39
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.11518,
+       "TotalPrice": 57.59
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.10991,
+       "TotalPrice": 109.91
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": false,
+     "Supplier": {
+      "Id": 296,
+      "Name": "Texas Instruments"
+     },
+     "QuantityAvailableforPackageType": 72199,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "296-LM358DRDKR-ND",
+     "PackageType": {
+      "Id": 243,
+      "Name": "Digi-Reel\u00ae"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.26,
+       "TotalPrice": 0.26
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.175,
+       "TotalPrice": 1.75
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.1544,
+       "TotalPrice": 3.86
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.1322,
+       "TotalPrice": 13.22
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.12156,
+       "TotalPrice": 30.39
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.11518,
+       "TotalPrice": 57.59
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.10991,
+       "TotalPrice": 109.91
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": false,
+     "Supplier": {
+      "Id": 296,
+      "Name": "Texas Instruments"
+     },
+     "QuantityAvailableforPackageType": 72199,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 7.0
+    }
+   ],
+   "QuantityAvailable": 72199,
+   "ProductStatus": {
+    "Id": 0,
+    "Status": "Active"
+   },
+   "BackOrderNotAllowed": false,
+   "NormallyStocking": true,
+   "Discontinued": false,
+   "EndOfLife": false,
+   "Ncnr": false,
+   "BaseProductNumber": {
+    "Id": 376,
+    "Name": "LM358"
+   },
+   "ManufacturerLeadWeeks": "26",
+   "ManufacturerPublicQuantity": 0,
+   "Classifications": {
+    "ReachStatus": "REACH Unaffected",
+    "RohsStatus": "ROHS3 Compliant",
+    "MoistureSensitivityLevel": "1  (Unlimited)",
+    "ExportControlClassNumber": "EAR99",
+    "HtsusCode": "8542.33.0001"
+   }
+  },
+  {
+   "Description": {
+    "ProductDescription": "IC OP AMP 2CH 8-SOIC",
+    "DetailedDescription": "Standard (General Purpose) Amplifier 2 Circuit 8-SOIC"
+   },
+   "Manufacturer": {
+    "Id": 846,
+    "Name": "Rohm Semiconductor"
+   },
+   "ManufacturerProductNumber": "LM358DR",
+   "UnitPrice": 0.68,
+   "ProductUrl": "https://www.digikey.com/en/products/detail/rohm-semiconductor/LM358DR/1878950",
+   "DatasheetUrl": "//mm.digikey.com/Volume0/opasdata/d220001/medias/docus/705/LM324%2C358%2C2902%2C2904.pdf",
+   "ProductVariations": [
+    {
+     "DigiKeyProductNumber": "LM358DRTR-ND",
+     "PackageType": {
+      "Id": 1,
+      "Name": "Tape & Reel (TR)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 2500,
+       "UnitPrice": 0.31039,
+       "TotalPrice": 775.975
+      },
+      {
+       "BreakQuantity": 5000,
+       "UnitPrice": 0.30216,
+       "TotalPrice": 1510.8
+      },
+      {
+       "BreakQuantity": 7500,
+       "UnitPrice": 0.29803,
+       "TotalPrice": 2235.225
+      },
+      {
+       "BreakQuantity": 12500,
+       "UnitPrice": 0.29346,
+       "TotalPrice": 3668.25
+      },
+      {
+       "BreakQuantity": 17500,
+       "UnitPrice": 0.29079,
+       "TotalPrice": 5088.825
+      },
+      {
+       "BreakQuantity": 25000,
+       "UnitPrice": 0.28822,
+       "TotalPrice": 7205.5
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 846,
+      "Name": "Rohm Semiconductor"
+     },
+     "QuantityAvailableforPackageType": 0,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 2500,
+     "StandardPackage": 2500,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "LM358DRCT-ND",
+     "PackageType": {
+      "Id": 2,
+      "Name": "Cut Tape (CT)"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.68,
+       "TotalPrice": 0.68
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.483,
+       "TotalPrice": 4.83
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.4336,
+       "TotalPrice": 10.84
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.3788,
+       "TotalPrice": 37.88
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.35272,
+       "TotalPrice": 88.18
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.337,
+       "TotalPrice": 168.5
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.32406,
+       "TotalPrice": 324.06
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 846,
+      "Name": "Rohm Semiconductor"
+     },
+     "QuantityAvailableforPackageType": 1395,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 0.0
+    },
+    {
+     "DigiKeyProductNumber": "LM358DRDKR-ND",
+     "PackageType": {
+      "Id": 243,
+      "Name": "Digi-Reel\u00ae"
+     },
+     "StandardPricing": [
+      {
+       "BreakQuantity": 1,
+       "UnitPrice": 0.68,
+       "TotalPrice": 0.68
+      },
+      {
+       "BreakQuantity": 10,
+       "UnitPrice": 0.483,
+       "TotalPrice": 4.83
+      },
+      {
+       "BreakQuantity": 25,
+       "UnitPrice": 0.4336,
+       "TotalPrice": 10.84
+      },
+      {
+       "BreakQuantity": 100,
+       "UnitPrice": 0.3788,
+       "TotalPrice": 37.88
+      },
+      {
+       "BreakQuantity": 250,
+       "UnitPrice": 0.35272,
+       "TotalPrice": 88.18
+      },
+      {
+       "BreakQuantity": 500,
+       "UnitPrice": 0.337,
+       "TotalPrice": 168.5
+      },
+      {
+       "BreakQuantity": 1000,
+       "UnitPrice": 0.32406,
+       "TotalPrice": 324.06
+      }
+     ],
+     "MyPricing": [],
+     "MarketPlace": false,
+     "TariffActive": true,
+     "Supplier": {
+      "Id": 846,
+      "Name": "Rohm Semiconductor"
+     },
+     "QuantityAvailableforPackageType": 1395,
+     "MaxQuantityForDistribution": 999999999,
+     "MinimumOrderQuantity": 1,
+     "StandardPackage": 1,
+     "DigiReelFee": 7.0
+    }
+   ],
+   "QuantityAvailable": 1395,
+   "ProductStatus": {
+    "Id": 7,
+    "Status": "Not For New Designs"
+   },
+   "BackOrderNotAllowed": false,
+   "NormallyStocking": true,
+   "Discontinued": false,
+   "EndOfLife": false,
+   "Ncnr": false,
+   "BaseProductNumber": {
+    "Id": 376,
+    "Name": "LM358"
+   },
+   "ManufacturerLeadWeeks": "7",
+   "ManufacturerPublicQuantity": 0,
+   "Classifications": {
+    "ReachStatus": "REACH Unaffected",
+    "RohsStatus": "ROHS3 Compliant",
+    "MoistureSensitivityLevel": "1  (Unlimited)",
+    "ExportControlClassNumber": "EAR99",
+    "HtsusCode": "8542.33.0001"
+   }
+  }
+ ],
+ "SearchLocaleUsed": {
+  "Site": "US",
+  "Language": "en",
+  "Currency": "USD"
+ }
+}

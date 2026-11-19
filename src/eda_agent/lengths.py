@@ -121,8 +121,10 @@ LENGTH_DOCUMENTS: dict[str, str] = {
 }
 
 #: Tools that take or give no lengths: screen pixels, pictures, the tool
-#: surface itself. Their arguments and replies pass through as they are.
-NO_LENGTHS_PREFIXES = ("app_", "tool_", "server_", "datasheet_", "sim_")
+#: surface itself, and the purchasing tools, whose numbers are quantities,
+#: prices and counts. Their arguments and replies pass through as they are.
+NO_LENGTHS_PREFIXES = ("app_", "tool_", "server_", "datasheet_", "sim_",
+                       "part_purchasing_")
 NO_LENGTHS = frozenset({
     "length_units", "design_visual_review", "proj_export_image",
     "pcb_render_3d", "pcb_render_png", "pcb_render_svg", "sch_render_svg",

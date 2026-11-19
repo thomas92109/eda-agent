@@ -9,11 +9,24 @@ from ..units import MM_PER_MIL
 from .option_hints import project_option_collision
 from .datasheet_hints import tag_response
 from .bulk_hints import BulkHintTracker
-from ..export.variant_bom import apply_variant, find_variant
+from ..export.variant_bom import (
+    _KINDS as _VARIATION_KINDS,
+    apply_variant,
+    find_variant,
+)
+from ..export.purchasing_bom import purchasing_bom
 from ..ui import change_order
 from .answering import send_answering
 from .bulk import bulk_items_by
 from ..prjpcb import removals_together
+
+#: What Altium calls the base design when no variant is active, and what
+#: proj_get_bom's purchasing mode takes to mean it.
+_NO_VARIANT = "[No Variations]"
+
+#: Designators per parameter read in purchasing mode. The handler looks
+#: each component up in the list it was sent, so one long list is slow.
+_PARAMETER_BATCH = 200
 
 
 def _rows(result: Any, key: str) -> list:
@@ -298,6 +311,108 @@ def _netlist_nodes(pins: list) -> tuple[list[tuple[str, str, str, str]], int]:
             seen.add(row)
             nodes.append(row)
     return nodes, dropped
+
+
+async def purchasing_bom_of_project(
+        bridge, project_path: Optional[str], limit: int,
+        variant: Optional[str],
+        include_not_fitted: bool = False) -> dict[str, Any]:
+    """proj_get_bom's purchasing mode: the BOM a buyer orders from.
+
+    At module level so the purchasing tools read the same BOM the same
+    way. ``include_not_fitted`` counts the parts the variant leaves off
+    the board as if they were fitted; everything else the variant says
+    (alternates, changed parameters) still applies.
+    """
+    scope: dict[str, Any] = {}
+    if project_path:
+        scope["project_path"] = project_path
+    bom = await bridge.send_command_async(
+        "project.get_bom", {"limit": str(limit), **scope})
+    listed = bom.get("components") if isinstance(bom, dict) else None
+    if not isinstance(listed, list):
+        return {"ok": False, "reason": "the project's components could "
+                "not be read", "bom_reply": bom}
+
+    # The variant is settled before anything is counted: a BOM built
+    # for the wrong variant has wrong quantities and looks right.
+    wanted, source = (variant or "").strip(), "requested"
+    if not wanted:
+        active = await bridge.send_command_async(
+            "project.get_active_variant", scope)
+        wanted = str(active.get("name") or "").strip() \
+            if isinstance(active, dict) else ""
+        source = "active"
+        if not wanted:
+            return {"ok": False, "reason": "the project's active variant "
+                    "could not be read, so which parts are fitted is not "
+                    "known. Name one with variant=, or pass "
+                    f"variant='{_NO_VARIANT}' for the base design.",
+                    "active_variant_reply": active}
+    chosen = None
+    if wanted.upper() != _NO_VARIANT.upper():
+        listing = await bridge.send_command_async(
+            "project.get_variants", scope, timeout=120.0)
+        variants = listing.get("variants") \
+            if isinstance(listing, dict) else None
+        if not isinstance(variants, list):
+            return {"ok": False, "reason": "the project's variants could "
+                    "not be read", "variants_reply": listing}
+        chosen = find_variant(variants, wanted)
+        if chosen is None:
+            return {"ok": False, "reason": f"no variant named {wanted!r}",
+                    "variants": [v.get("name") for v in variants]}
+
+    # The BOM lists what is placed; the parameters come from the
+    # schematic components, read without pins or nets.
+    names = [str(c.get("designator", "")) for c in listed
+             if isinstance(c, dict)]
+    parameters: dict[str, Any] = {}
+    for start in range(0, len(names), _PARAMETER_BATCH):
+        batch = [n for n in names[start:start + _PARAMETER_BATCH] if n]
+        if not batch:
+            continue
+        info = await bridge.send_command_async(
+            "project.get_component_info_batch",
+            {"designators": "~~".join(batch), "with_pin_nets": "false",
+             **scope}, timeout=120.0)
+        for comp in (info.get("components") or []) \
+                if isinstance(info, dict) else []:
+            if isinstance(comp, dict) \
+                    and isinstance(comp.get("parameters"), dict):
+                parameters[str(comp.get("designator", ""))] = \
+                    comp["parameters"]
+    components = [{"designator": str(c.get("designator", "")),
+                   "footprint": c.get("footprint", ""),
+                   "parameters": parameters.get(str(c.get("designator", "")))}
+                  for c in listed if isinstance(c, dict)]
+
+    if include_not_fitted and chosen is not None:
+        chosen = {**chosen, "variations": [
+            entry for entry in chosen.get("variations") or []
+            if _VARIATION_KINDS.get(
+                str(entry.get("kind", "")).strip().lower()) != "not_fitted"]}
+    result = purchasing_bom(components, chosen)
+    truncated = bool(bom.get("limit_hit"))
+    skipped = int(bom.get("skipped_nil") or 0) \
+        + sum(1 for c in listed if not isinstance(c, dict))
+    summary = {
+        "variant": chosen.get("name", wanted) if chosen else _NO_VARIANT,
+        "variant_source": source,
+        **({"not_fitted_included": True} if include_not_fitted else {}),
+        **result.pop("counts"),
+        "complete": not truncated and not skipped,
+        "truncated": truncated,
+    }
+    if truncated:
+        summary["incomplete_reason"] = (
+            f"stopped at limit={limit} with components left over; "
+            "quantities are short. Raise limit.")
+    elif skipped:
+        summary["incomplete_reason"] = (
+            f"{skipped} object(s) of the project came back empty from "
+            "Altium and are not counted")
+    return {"mode": "purchasing", "summary": summary, **result}
 
 
 def register_project_tools(mcp):
@@ -905,17 +1020,19 @@ def register_project_tools(mcp):
         CSV). Single-pin and unnamed nets are included.
 
         Args:
-            output_path: Destination file. Defaults to
-                workspace/netlist.<ext> if omitted.
+            output_path: Destination file, used as given (a name that
+                exists is never replaced: the new file gets the local
+                time before its extension, then ``_2``, ``_3``; a path
+                inside the public repository is refused). Empty writes ``netlist/netlist.net`` (pads) or
+                ``netlist/netlist.csv`` (tabular) in the export folder
+                (EDA_AGENT_EXPORT_DIR, else EDA Agent/exports under the
+                user's home), under the first free name.
             net_format: "pads" (default) or "tabular".
             project_path: Optional project path; uses active if omitted.
 
         Returns:
             Dictionary with output_path, net_format, net_count, node_count.
         """
-        from pathlib import Path
-        from ..config import get_config
-
         fmt = (net_format or "pads").strip().lower()
         if fmt not in ("pads", "tabular"):
             return {"success": False, "error": f"unknown net_format '{net_format}' (use 'pads' or 'tabular')"}
@@ -949,14 +1066,19 @@ def register_project_tools(mcp):
             text = "\n".join(lines) + "\n"
             default_name = "netlist.csv"
 
-        if output_path:
-            out = Path(output_path)
-        else:
-            out = get_config().workspace_dir / default_name
-        out.parent.mkdir(parents=True, exist_ok=True)
+        from ..export.destination import (
+            ExportPathError,
+            claimed,
+            export_file,
+        )
+        try:
+            out = export_file(output_path or "", "netlist", default_name)
+        except ExportPathError as exc:
+            return {"success": False, "error": str(exc)}
         # newline="" writes the line ends as built: text mode on Windows
         # turned the PADS CRLF into CR CR LF.
-        out.write_text(text, encoding="utf-8", newline="")
+        with claimed([out]):
+            out.write_text(text, encoding="utf-8", newline="")
 
         return {
             "success": True,
@@ -1016,7 +1138,7 @@ def register_project_tools(mcp):
 
     @mcp.tool()
     async def proj_export_jlc_assembly(
-        output_dir: str,
+        output_dir: str = "",
         lcsc_parameter: str = "",
         name: str = "",
         not_placed: Optional[list[str]] = None,
@@ -1038,6 +1160,12 @@ def register_project_tools(mcp):
 
         Args:
             output_dir: folder for the two files (made when missing).
+                Empty writes them to the export folder
+                (EDA_AGENT_EXPORT_DIR, else EDA Agent/exports under the
+                user's home). Files are never overwritten: if either
+                name exists, BOTH get the same local time before the
+                extension (``_20261117_153000``, then ``_2``, ``_3``). A
+                folder inside the public repository is refused.
             lcsc_parameter: the parameter holding the LCSC number. Empty
                 tries "LCSC Part #", "LCSC Part Number", "LCSC", "LCSC Part",
                 "JLCPCB Part #".
@@ -1116,23 +1244,33 @@ def register_project_tools(mcp):
 
         stem = name or os.path.splitext(
             str((coords or {}).get("board_name") or "board"))[0] or "board"
-        os.makedirs(output_dir, exist_ok=True)
-        bom_path = os.path.join(output_dir, f"{stem}_BOM_JLCPCB.csv")
-        cpl_path = os.path.join(output_dir, f"{stem}_CPL_JLCPCB.csv")
-        with open(bom_path, "w", newline="", encoding="utf-8") as fh:
-            w = csv.writer(fh)
-            w.writerow(["Comment", "Designator", "Footprint", "LCSC Part #"])
-            for (comment, fp, part), refs in groups.items():
-                w.writerow([comment, ",".join(refs), fp, part])
-        with open(cpl_path, "w", newline="", encoding="utf-8") as fh:
-            w = csv.writer(fh)
-            w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
-            for c in comps:
-                x = (float(c.get("x", 0)) - ox) * MM_PER_MIL
-                y = (float(c.get("y", 0)) - oy) * MM_PER_MIL
-                side = "Bottom" if str(c.get("side", "")).lower().startswith("b") else "Top"
-                w.writerow([c["designator"], f"{x:.4f}mm", f"{y:.4f}mm", side,
-                            f"{float(c.get('rotation', 0)) % 360:g}"])
+        from ..export.destination import (
+            ExportPathError,
+            claimed,
+            export_files,
+        )
+        try:
+            bom_out, cpl_out = export_files(
+                output_dir, "bom",
+                [f"{stem}_BOM_JLCPCB.csv", f"{stem}_CPL_JLCPCB.csv"])
+        except ExportPathError as exc:
+            return {"ok": False, "reason": str(exc)}
+        bom_path, cpl_path = str(bom_out), str(cpl_out)
+        with claimed([bom_out, cpl_out]):
+            with open(bom_path, "w", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                w.writerow(["Comment", "Designator", "Footprint", "LCSC Part #"])
+                for (comment, fp, part), refs in groups.items():
+                    w.writerow([comment, ",".join(refs), fp, part])
+            with open(cpl_path, "w", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
+                for c in comps:
+                    x = (float(c.get("x", 0)) - ox) * MM_PER_MIL
+                    y = (float(c.get("y", 0)) - oy) * MM_PER_MIL
+                    side = "Bottom" if str(c.get("side", "")).lower().startswith("b") else "Top"
+                    w.writerow([c["designator"], f"{x:.4f}mm", f"{y:.4f}mm", side,
+                                f"{float(c.get('rotation', 0)) % 360:g}"])
         out = {"ok": True, "board": board_doc, "bom_path": bom_path, "cpl_path": cpl_path,
                "parts": len(comps), "bom_rows": len(groups),
                "without_lcsc": missing, "origin_mils": [ox, oy]}
@@ -1146,10 +1284,203 @@ def register_project_tools(mcp):
         return out
 
     @mcp.tool()
+    async def proj_export_purchasing_bom_csv(
+        output_path: str = "",
+        columns: Optional[list[str]] = None,
+        include_dnp: bool = False,
+        project_path: Optional[str] = None,
+        variant: Optional[str] = None,
+        limit: int = 1000,
+        allow_incomplete: bool = False,
+    ) -> dict[str, Any]:
+        """Write the purchasing BOM to a CSV file, and say what was written.
+
+        The BOM is the one ``proj_get_bom(mode="purchasing")`` builds (the
+        active variant unless ``variant`` names one), turned into CSV in
+        Python from Altium's own values. Nothing is typed, guessed, merged
+        or shortened, and every reference designator is kept. The reply
+        carries counts and warnings, never the BOM itself. No distributor
+        is contacted and no Altium document is changed.
+
+        The file goes to the export folder (``EDA_AGENT_EXPORT_DIR``, else
+        EDA Agent/exports under the user's home), in its ``bom`` folder,
+        under a free name. An export is NEVER overwritten: a name that
+        exists gets the local time before its extension
+        (``name_20261117_153000.csv``, then ``_2``, ``_3``), whether it
+        came from ``output_path`` or not, and a path inside the public
+        repository is refused.
+
+        Args:
+            output_path: A file to write. Empty picks
+                ``<project>_purchasing_BOM.csv`` in the export folder.
+            columns: Ordered column identifiers: quantity, part_number,
+                description, manufacturer, reference_designators,
+                footprint, fitted_status. Left out, the file has exactly
+                Quantity, Part Number, Description, Manufacturer and
+                Reference Designator, in that order. An unknown, repeated
+                or empty choice is refused; nothing is written.
+            include_dnp: Also write the parts the variant does not fit, as
+                rows of their own with status DNP and Quantity 0 (listed,
+                not bought). It needs fitted_status in columns; without
+                it, the default five included, the call is refused and
+                nothing is read or written. Off by default.
+            project_path: The project; the focused one when omitted.
+            variant: A variant by name; the active one when omitted.
+            limit: Most components to read from the project.
+            allow_incomplete: Write even when Altium's read was cut short,
+                so quantities are short. Refused by default.
+
+        Returns:
+            {"ok", "output_path", "rows", "columns", "headers",
+            "variant", "include_dnp", "totals", "warnings", "complete"},
+            or {"ok": False, "reason"} with nothing written. ``totals``
+            counts every component by what Altium says it is: fitted BOM
+            lines and quantity, ``unresolved_components`` (no usable
+            Manufacturer or Part Number), ``not_in_bom_components`` (kept
+            out by Component Kind) and ``not_fitted_components`` (DNP).
+            With include_dnp it also divides the not-fitted parts into
+            ``dnp_components`` (on a DNP row), ``dnp_not_in_bom_components``,
+            ``dnp_unresolved_components`` and ``dnp_unclassified_components``;
+            those three are null when the not-fitted parts were not read.
+            ``warnings`` lists whatever to look at: components missing
+            from the file and why, Altium's inconsistencies, cells
+            neutralized against spreadsheet formulas, and values Excel
+            would reinterpret. The file is UTF-8 with a byte order mark
+            and CRLF line ends, so Excel opens it directly.
+        """
+        import os
+
+        from ..export.destination import (
+            ExportPathError,
+            claimed,
+            export_file,
+        )
+        from ..export.purchasing_bom_csv import (
+            ENCODING,
+            ColumnSelectionError,
+            build_purchasing_csv,
+            resolve_columns,
+        )
+
+        try:
+            resolve_columns(columns, include_dnp=bool(include_dnp))
+        except ColumnSelectionError as exc:
+            return {"ok": False, "reason": str(exc)}
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            return {"ok": False, "reason": (
+                f"limit {limit!r} is not a whole number, 1 or more")}
+
+        bridge = get_bridge()
+
+        def unreadable(bom: Any) -> Optional[dict[str, Any]]:
+            if isinstance(bom, dict) and bom.get("ok") is not False \
+                    and isinstance(bom.get("lines"), list):
+                return None
+            return {"ok": False, "reason": (
+                "the project's purchasing BOM could not be read: "
+                + str(bom.get("reason") if isinstance(bom, dict) else bom))}
+
+        bom = await purchasing_bom_of_project(
+            bridge, project_path, limit, variant)
+        failed = unreadable(bom)
+        if failed:
+            return failed
+        summary = bom.get("summary") or {}
+        complete = bool(summary.get("complete", True))
+        # The reason is a sentence of its own and ends in a full stop;
+        # it is quoted without it so the message cannot double the mark.
+        why_incomplete = str(summary.get("incomplete_reason")
+                             or "no reason was given").strip().rstrip(".")
+        if not complete and not allow_incomplete:
+            return {"ok": False, "complete": False,
+                    "incomplete_reason": summary.get("incomplete_reason"),
+                    "reason": (
+                        f"Altium's read of the project is incomplete: "
+                        f"{why_incomplete}. Nothing was written. Pass "
+                        "allow_incomplete=True to write it anyway.")}
+
+        dnp_bom = None
+        if include_dnp and bom.get("not_fitted"):
+            # The same variant, by the name the first read settled on, so
+            # a variant switched in between cannot mix two builds.
+            dnp_bom = await purchasing_bom_of_project(
+                bridge, project_path, limit,
+                summary.get("variant") or variant, include_not_fitted=True)
+            failed = unreadable(dnp_bom)
+            if failed:
+                return failed
+
+        built = build_purchasing_csv(bom, columns, dnp_bom,
+                                     include_dnp=bool(include_dnp))
+        if not built["rows"]:
+            return {"ok": False, "reason": (
+                "the purchasing BOM has no lines to export (every component "
+                "is unresolved, not fitted or kept out of the BOM). Nothing "
+                "was written."),
+                "totals": built["totals"], "warnings": built["warnings"]}
+        warnings = list(built["warnings"])
+        if dnp_bom is not None and (dnp_bom.get("summary") or {}).get(
+                "components") != summary.get("components"):
+            warnings.append(
+                "the project changed between the two reads (the component "
+                "count differs); read it again before relying on the DNP rows")
+        if not complete:
+            warnings.append(
+                f"INCOMPLETE: {why_incomplete}. Quantities may be short; do "
+                "not order from this file")
+
+        stem = ""
+        if project_path:
+            stem = os.path.splitext(os.path.basename(str(project_path)))[0]
+        else:
+            focused = await bridge.send_command_async("project.get_focused")
+            if isinstance(focused, dict):
+                stem = os.path.splitext(
+                    str(focused.get("project_name") or ""))[0]
+        stem = "".join(c if c.isalnum() or c in "-_." else "_"
+                       for c in stem.strip()) or "project"
+
+        data = built["text"].encode(ENCODING)
+        wanted = os.path.basename(output_path) if output_path             else f"{stem}_purchasing_BOM.csv"
+        try:
+            # The file is created exclusively and empty: a name that is
+            # taken gets a timestamp, never a replacement.
+            out = export_file(output_path, "bom", f"{stem}_purchasing_BOM.csv")
+        except ExportPathError as exc:
+            return {"ok": False, "reason": str(exc)}
+        except OSError as exc:
+            return {"ok": False, "reason": f"could not create the file: {exc}"}
+        try:
+            with claimed([out]):
+                out.write_bytes(data)
+        except OSError as exc:
+            return {"ok": False, "reason": (
+                f"could not write {out}: {exc}. The partial file was "
+                "removed.")}
+        if out.name != wanted:
+            warnings.append(
+                f"{wanted} already exists, so this export was written as "
+                f"{out.name}; nothing was overwritten")
+
+        return {
+            "ok": True,
+            "output_path": os.path.abspath(out),
+            "rows": built["rows"],
+            "columns": built["columns"],
+            "headers": built["headers"],
+            "variant": summary.get("variant"),
+            "include_dnp": bool(include_dnp),
+            "complete": complete,
+            "totals": built["totals"],
+            "warnings": warnings,
+        }
+
+    @mcp.tool()
     async def proj_get_bom(
         project_path: Optional[str] = None,
         limit: int = 1000,
         variant: Optional[str] = None,
+        mode: str = "full",
     ) -> dict[str, Any]:
         """Export a full BOM from the compiled project.
 
@@ -1168,11 +1499,25 @@ def register_project_tools(mcp):
         a varied Comment becomes ``comment``). An alternate keeps the base
         comment unless the variant varies it.
 
+        ``mode="purchasing"`` returns the BOM to order from instead, with
+        no pins or nets: fitted components grouped by their schematic
+        parameters ``Manufacturer`` and ``Part Number`` (names matched
+        ignoring case; no other field stands in for them). It builds
+        the project's ACTIVE variant unless ``variant`` names one
+        ("[No Variations]" is the base design), applying the variant's
+        values for those two parameters. A component is never guessed
+        or dropped: one lacking either parameter is in ``unresolved``
+        with the reason, as is an alternate part whose variant entry
+        does not state both. A line's ``description`` is the
+        ``Description`` parameter, never the comment; it is empty when
+        the line's components disagree, which ``inconsistencies`` lists.
+
         Args:
             project_path: Optional project path. If None, uses active project.
             limit: Max components to return (default 1000).
             variant: A variant's name or description. Leave empty for the
-                base design.
+                base design (the active variant in purchasing mode).
+            mode: "full" (default) or "purchasing".
 
         Returns:
             Dictionary with "components" array and "count", "limit",
@@ -1182,8 +1527,27 @@ def register_project_tools(mcp):
             also ``variant``, ``not_fitted``, ``alternates``, ``varied``
             and ``entries_not_in_bom``; each component carries
             ``variation`` (none, fitted or alternate).
+
+            Purchasing mode: ``summary`` (variant, variant_source,
+            components, fitted_components, line_items,
+            unresolved_components, not_fitted_components,
+            not_in_bom_components, complete, truncated), ``lines``
+            (manufacturer, part_number, description, quantity,
+            designators, footprints), ``unresolved`` (designator,
+            manufacturer, part_number, description, footprint, reason),
+            ``not_fitted``,
+            ``not_in_bom`` (Component Kind keeps it out of the BOM)
+            and ``inconsistencies``. ``complete`` false means
+            quantities are short: do not order from it.
         """
         bridge = get_bridge()
+        wanted_mode = str(mode or "full").strip().lower()
+        if wanted_mode == "purchasing":
+            return await purchasing_bom_of_project(
+                bridge, project_path, limit, variant)
+        if wanted_mode != "full":
+            return {"ok": False, "reason": f"no BOM mode {mode!r}; mode is "
+                    "'full' or 'purchasing'"}
         params: dict[str, Any] = {"limit": str(limit)}
         if project_path:
             params["project_path"] = project_path
@@ -3012,17 +3376,19 @@ def register_project_tools(mcp):
         cell ``Fitted`` / ``Not Fitted`` / ``Alternate``.
 
         Args:
-            output_path: Destination .csv. Defaults to
-                ``workspace/variant_matrix.csv``.
+            output_path: Destination .csv, used as given (a name that
+                exists is never replaced: the new file gets the local
+                time before its extension, then ``_2``, ``_3``; a path
+                inside the public repository is refused). Empty writes ``variant-matrix/variant_matrix.csv``
+                in the export folder (EDA_AGENT_EXPORT_DIR, else
+                EDA Agent/exports under the user's home), under the
+                first free name.
             project_path: Optional project path. If None, uses the focused
                 project.
 
         Returns:
             {"output_path", "component_count", "variant_count"} or an error.
         """
-        from pathlib import Path
-
-        from ..config import get_config
         from ..export.variant_matrix_csv import format_variant_matrix_csv
 
         bridge = get_bridge()
@@ -3036,13 +3402,19 @@ def register_project_tools(mcp):
             return {"success": False,
                     "error": "could not read variant matrix (open a PcbDoc project)"}
 
+        from ..export.destination import (
+            ExportPathError,
+            claimed,
+            export_file,
+        )
+
         csv_text = format_variant_matrix_csv(matrix)
-        if output_path:
-            out = Path(output_path)
-        else:
-            out = get_config().workspace_dir / "variant_matrix.csv"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(csv_text, encoding="utf-8")
+        try:
+            out = export_file(output_path, "variant-matrix", "variant_matrix.csv")
+        except ExportPathError as exc:
+            return {"success": False, "error": str(exc)}
+        with claimed([out]):
+            out.write_text(csv_text, encoding="utf-8")
         return {
             "success": True,
             "output_path": str(out),

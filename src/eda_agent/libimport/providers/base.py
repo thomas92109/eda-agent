@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
+    "AmbiguousPart",
     "PartHit",
     "PartProvider",
     "ProviderError",
@@ -56,6 +57,20 @@ class ProviderUnavailable(ProviderError):
     """
 
 
+class AmbiguousPart(ProviderError):
+    """The number asked for names several products at this provider.
+
+    One manufacturer part number can be two makers' parts (LM358DR is a
+    Texas Instruments part and a Rohm part). ``candidates`` lists each
+    with the ref that names it alone, so the caller chooses: nothing
+    here picks one.
+    """
+
+    def __init__(self, message: str, candidates: list[dict[str, Any]]):
+        super().__init__(message)
+        self.candidates = candidates
+
+
 @dataclass
 class PartHit:
     """One candidate part, attributed to the provider that found it."""
@@ -76,6 +91,10 @@ class PartHit:
     license: str = ""
     #: Anything provider-specific a later fetch needs.
     extra: dict[str, Any] = field(default_factory=dict)
+    #: What a distributor says about buying the part: stock, lifecycle,
+    #: lead time and one offer per orderable number with its price
+    #: breaks (see ``_sourcing``). None from a source that sells nothing.
+    sourcing: dict[str, Any] | None = None
 
     def sort_key(self) -> tuple[str, str, str]:
         """Neutral ordering: provider, then MPN, then id.
@@ -103,7 +122,7 @@ class PartHit:
         return f"{self.provider}:{self.part_id}"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "ref": self.ref,
             "provider": self.provider,
             "part_id": self.part_id,
@@ -115,6 +134,9 @@ class PartHit:
             "provenance": self.provenance,
             "license": self.license,
         }
+        if self.sourcing is not None:
+            out["sourcing"] = self.sourcing
+        return out
 
 
 @runtime_checkable

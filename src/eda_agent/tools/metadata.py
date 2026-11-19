@@ -134,7 +134,7 @@ _SIMULATOR_TOOLS = frozenset({
     "proj_add_document", "proj_annotate", "proj_close", "proj_compile",
     "proj_create", "proj_cross_probe", "proj_export_bom_html",
     "proj_export_netlist", "proj_export_pdf", "proj_get_board_info",
-    "proj_get_bom", "proj_get_component_info", "proj_get_focused",
+    "proj_get_component_info", "proj_get_focused",
     "proj_get_nets", "proj_get_parameters", "proj_get_stats",
     "proj_import_from_kicad", "proj_list_documents", "proj_list_open", "proj_list_variants", "proj_open",
     "proj_remove_document", "proj_run_output", "proj_save",
@@ -163,6 +163,19 @@ _OFFLINE_BY_NAME = frozenset({"footprint_check_package",
 # Altium first, so reporting them as offline sends anyone filtering for
 # "works without Altium" straight into a bridge error.
 _CALC_NEEDS_BRIDGE = frozenset({"pcb_calc_polygon_area"})
+
+# part_ tools are offline because they only query part providers, but the
+# purchasing family starts from the project's BOM and reads it from the open
+# Altium project over the bridge (or its focused project). Only a caller
+# that passes the BOM lines itself avoids that, so the family is published
+# as needing Altium, which is what anyone filtering for "works without
+# Altium" must be told. The distributor lookups the tools then make are
+# network calls, not the bridge.
+_PARTS_NEED_BRIDGE = frozenset({
+    "part_purchasing_analyze", "part_purchasing_plan",
+    "part_purchasing_mpn_decisions", "part_purchasing_export_csv",
+    "part_purchasing_cart_prepare", "part_purchasing_cart_commit",
+})
 
 # design_* tools that are pure Python (per the design-agent surface: plan
 # authoring, analysis, and derivation all run offline). The bridge-backed
@@ -279,6 +292,30 @@ INTERACTION_OVERRIDES = {
     # lib_extract_cse_zip, proj_export_pdf, pcb_render_svg) is SILENT,
     # so match them. part_search never writes and stays readonly.
     "part_fetch": SILENT,
+    # These write outside the editor: a list in the DigiKey account,
+    # and the sign-in file in the profile of whoever runs the server.
+    # part_list_get only reads and stays readonly.
+    "part_list_login": SILENT,
+    "part_list_create": SILENT,
+    "part_list_add": SILENT,
+    # These write a cart at Mouser. part_cart_get only reads and stays
+    # readonly.
+    "part_cart_create": SILENT,
+    "part_cart_add": SILENT,
+    # Writes one CSV into the export folder (an export, like proj_export_*).
+    # part_purchasing_cart_prepare only reads and stays readonly. The commit
+    # writes a list or cart at a distributor and its journal.
+    "part_purchasing_export_csv": SILENT,
+    # Read the BOM and the distributors and write nothing. They are no
+    # longer offline (see _PARTS_NEED_BRIDGE), which was what made them
+    # readonly by default.
+    "part_purchasing_analyze": READONLY,
+    "part_purchasing_plan": READONLY,
+    "part_purchasing_cart_prepare": READONLY,
+    # Records or deletes a project's close part number decisions in the
+    # export folder; status and list only read.
+    "part_purchasing_mpn_decisions": SILENT,
+    "part_purchasing_cart_commit": SILENT,
     # Writes the downloaded PDF and its sidecar into the workspace cache.
     # Filed under parts, which is offline and so falls back to READONLY;
     # a tool that writes files is SILENT here, as part_fetch is.
@@ -531,6 +568,8 @@ def category_of(name: str) -> str:
 
 
 def _is_offline(name: str, category: str) -> bool:
+    if name in _PARTS_NEED_BRIDGE:
+        return False
     if category in _OFFLINE_CATEGORIES:
         return True
     if name in _OFFLINE_BY_NAME:

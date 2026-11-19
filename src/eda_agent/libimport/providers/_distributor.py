@@ -40,6 +40,7 @@ import urllib.request
 from typing import Any, Sequence
 
 from eda_agent.libimport.providers.base import (
+    AmbiguousPart,
     PartHit,
     ProviderError,
     ProviderUnavailable,
@@ -147,18 +148,35 @@ class DistributorProvider:
             with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403):
+            detail = self._error_detail(exc)
+            # Asked before the credential branch: Mouser refuses a
+            # client over its call limit with HTTP 403 and says so only
+            # in the body, which read as a bad key would send the user
+            # off to replace one that works.
+            if exc.code == 429 or _says_rate_limited(detail):
+                wait = (exc.headers.get("Retry-After", "")
+                        if exc.headers else "")
                 raise ProviderUnavailable(
+                    f"{self.name} rate-limited this client (HTTP "
+                    f"{exc.code})"
+                    + (f"; retry after {wait} s" if wait.strip().isdigit()
+                       else "")
+                    + "; the part may still exist.") from exc
+            if exc.code in (401, 403):
+                error: ProviderError = ProviderUnavailable(
                     f"{self.name} rejected the credential in "
                     f"{' / '.join(self.env_vars)} (HTTP {exc.code}). The "
                     f"endpoint is reachable, so this is a key problem, "
-                    f"not an outage.") from exc
-            if exc.code == 429:
-                raise ProviderUnavailable(
-                    f"{self.name} rate-limited this client (HTTP 429); "
-                    f"the part may still exist.") from exc
-            raise ProviderError(
-                f"{self.name} returned HTTP {exc.code}") from exc
+                    f"not an outage.")
+            else:
+                error = ProviderError(
+                    f"{self.name} returned HTTP {exc.code}"
+                    + (f": {detail}" if detail else ""))
+            # For a caller that acts on the status: a 404 from a lookup
+            # by number is "no such number", which has a fallback.
+            error.status = exc.code  # type: ignore[attr-defined]
+            error.detail = detail  # type: ignore[attr-defined]
+            raise error from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise ProviderUnavailable(
                 f"{self.name} unreachable: {exc}. This is not evidence "
@@ -172,6 +190,44 @@ class DistributorProvider:
 
         self._reject_error_payload(payload)
         return payload
+
+    def _error_detail(self, exc: urllib.error.HTTPError) -> str:
+        """What the body of a failed reply says, safe to repeat.
+
+        The distributor's own message when the body is JSON with one,
+        else nothing. Never the URL, which carries Mouser's key, and any
+        configured credential the body echoes is struck out.
+        """
+        try:
+            payload = json.loads(exc.read(20_000).decode("utf-8", "replace"))
+        except Exception:  # noqa: BLE001 - a body is optional
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        errors = payload.get("Errors")
+        if isinstance(errors, list) and errors:
+            text = "; ".join(
+                " ".join(str(e.get(k) or "") for k in ("Code", "Message"))
+                for e in errors if isinstance(e, dict))
+        else:
+            text = first_string(payload, ("detail",), ("ErrorMessage",),
+                                ("title",))
+            # DigiKey's error model says which input was wrong beside
+            # the message: "Error(s) in Parameters." alone names nothing.
+            more = [first_string(payload, ("ErrorDetails",))]
+            invalid = payload.get("ValidationErrors")
+            for entry in invalid if isinstance(invalid, list) else []:
+                if isinstance(entry, dict):
+                    more.append(": ".join(filter(None, (
+                        first_string(entry, ("Field",)),
+                        first_string(entry, ("Message",))))))
+            text = "; ".join(dict.fromkeys(
+                part for part in [text, *more] if part))
+        for var in self.env_vars:
+            secret = os.environ.get(var, "").strip()
+            if secret:
+                text = text.replace(secret, "***")
+        return " ".join(text.split())[:400]
 
     def _reject_error_payload(self, payload: Any) -> None:
         """Refuse an error delivered under a success status code.
@@ -190,6 +246,10 @@ class DistributorProvider:
             if not problem:
                 continue
             detail = json.dumps(problem)[:200]
+            if _says_rate_limited(detail):
+                raise ProviderUnavailable(
+                    f"{self.name} rate-limited this client: {detail}. "
+                    f"The part may still exist.")
             raise ProviderUnavailable(
                 f"{self.name} returned an error under HTTP 200: {detail}. "
                 f"This is usually a rejected or missing credential; it is "
@@ -226,16 +286,91 @@ class DistributorProvider:
         """
         for hit in self.search(part_id, limit=50):
             if hit.part_id == part_id or hit.mpn == part_id:
-                detail = hit.to_dict()
-                detail["kind"] = self.kind
-                detail["files"] = {}
-                detail["note"] = (
-                    f"{self.name} supplies part identity and a datasheet, "
-                    f"NOT a symbol or footprint. Build the part from the "
-                    f"datasheet, or find geometry through a library "
-                    f"provider.")
-                return detail
+                return self._detail([hit])
         raise ProviderError(f"{self.name} has no part {part_id!r}")
+
+    def _detail(self, hits: list[PartHit]) -> dict[str, Any]:
+        """The fetch reply for the one part a number matched.
+
+        One number can name several products: LM358DR is a Texas
+        Instruments part and a Rohm part at both DigiKey and Mouser.
+        Nothing here can know which was meant, so more than one match is
+        refused with each candidate and the ref that names it alone.
+        """
+        if len(hits) > 1:
+            raise AmbiguousPart(
+                f"{len(hits)} {self.name} products carry this number ("
+                + ", ".join(h.manufacturer or "?" for h in hits)
+                + "). None was chosen: fetch one by a ref or a "
+                "distributor_pn from candidates.",
+                [self._candidate(hit) for hit in hits])
+        detail = hits[0].to_dict()
+        detail["kind"] = self.kind
+        detail["files"] = {}
+        detail["note"] = (
+            f"{self.name} supplies part identity and a datasheet, "
+            f"NOT a symbol or footprint. Build the part from the "
+            f"datasheet, or find geometry through a library "
+            f"provider.")
+        return detail
+
+    def _candidate(self, hit: PartHit) -> dict[str, Any]:
+        """One product a shared number could mean, and how to name it."""
+        offers = (hit.sourcing or {}).get("offers") or []
+        numbers = [o["distributor_pn"] for o in offers
+                   if o.get("distributor_pn")]
+        return {
+            "ref": f"{self.name}:{numbers[0]}" if numbers else hit.ref,
+            "manufacturer": hit.manufacturer,
+            "mpn": hit.mpn,
+            "description": hit.description,
+            "offers": [{"distributor_pn": o.get("distributor_pn"),
+                        "packaging": o.get("packaging")} for o in offers],
+        }
+
+    def _distinct_ids(self, hits: list[PartHit]) -> list[PartHit]:
+        """Give products that share an MPN ids that tell them apart.
+
+        A hit's id is its MPN, which is what a ref has always carried.
+        Where two hits of one search share it they are different
+        products, and each takes its first distributor number instead,
+        which fetch resolves to that product alone.
+        """
+        shared: dict[str, int] = {}
+        for hit in hits:
+            shared[hit.part_id.lower()] = shared.get(hit.part_id.lower(), 0) + 1
+        for hit in hits:
+            if shared[hit.part_id.lower()] < 2:
+                continue
+            for offer in (hit.sourcing or {}).get("offers") or []:
+                if offer.get("distributor_pn"):
+                    hit.part_id = offer["distributor_pn"]
+                    break
+        return hits
+
+    def _matching(self, hits: list[PartHit], part_id: str) -> list[PartHit]:
+        """The hits ``part_id`` names, by MPN or by distributor number."""
+        wanted = str(part_id).strip().lower()
+        out = []
+        for hit in hits:
+            numbers = {hit.part_id.lower(), hit.mpn.lower()}
+            for offer in (hit.sourcing or {}).get("offers") or []:
+                numbers.add(str(offer.get("distributor_pn") or "").lower())
+            if wanted in numbers:
+                out.append(hit)
+        return out
+
+
+def _says_rate_limited(detail: str) -> bool:
+    """Whether a failure body names a call limit.
+
+    The wordings are DigiKey's documented "BurstLimit exceeded" and
+    "Daily Ratelimit exceeded", and Mouser's "TooManyRequests ... Maximum
+    calls per day exceeded" as its users report it; Mouser documents none.
+    """
+    text = detail.lower().replace(" ", "")
+    return any(word in text for word in (
+        "toomanyrequests", "maximumcalls", "burstlimit", "ratelimit"))
 
 
 def first_string(source: Any, *paths: Sequence[str]) -> str:

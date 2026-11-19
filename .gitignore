@@ -54,8 +54,6 @@ Desktop.ini
 # Altium editor artefacts (generated on open/save)
 __Previews/
 History/
-scripts/altium/__Previews/
-scripts/altium/History/
 scripts/altium/*.tmp.*
 scripts/altium/TestUtils.exe
 
@@ -111,3 +109,130 @@ extensions/easyeda/*.eext
 
 # The Rust route core's build output
 route-core/target/
+
+# ---------------------------------------------------------------------------
+# Proprietary engineering and purchasing data: never commit. Patterns match
+# data files by extension or by specific name, never by a bare word, so
+# source files such as bom.py or purchasing_plan.py stay tracked. Synthetic
+# test fixtures are re-included below their rules.
+
+# Spreadsheets and CSV exports (BOMs, purchasing lists, distributor exports)
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
+*.ods
+!tests/**/fixtures/**/*.csv
+!tests/**/fixtures/**/*.tsv
+
+# Databases (copies of the distributor cache, project databases)
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Purchasing and BOM output, by name
+*purchasing*.json
+*purchasing*.html
+*bom*.json
+*bom*.html
+
+# Local data folders: nothing inside them is committed
+local-data/
+purchasing-data/
+boms/
+
+# Credentials, tokens and key material
+*.p12
+*.jks
+*.keystore
+*.token
+*.tokens.json
+*token*.json
+*client_secret*
+*credentials*.json
+*secret*.json
+.netrc
+
+# Altium and KiCad design files (projects, schematics, PCBs, libraries, outputs)
+*.SchDoc
+*.PcbDoc
+*.SchLib
+*.PcbLib
+*.PrjPcb
+*.OutJob
+*.kicad_pcb
+*.kicad_sch
+*.kicad_pro
+*.kicad_prl
+
+# More Altium files: the project's own spelling (.PrjPCB), libraries,
+# templates, and the folders Altium writes beside a project. Not *.PrjScr:
+# scripts/altium/Altium_API.PrjScr is EDA Agent's own script project.
+*.PrjPCB
+*.PrjPcbStructure
+*.IntLib
+*.DbLib
+*.LibPkg
+*.SchDot
+*.PcbDwf
+# The tracked test fixtures, re-included after every rule above that matches
+# them (the order matters, and Windows matches names case-insensitively).
+!tests/integration/fixtures/EDAAgentTest.PrjPcb
+!tests/integration/fixtures/EDAAgentTest.PrjPcbStructure
+
+# Folders Altium writes beside a project
+Project Outputs for */
+Project Logs for */
+
+# Netlists (Protel / Altium)
+*.NET
+
+# Manufacturing outputs (Gerber, drill, 3D models)
+*.gbr
+*.gtl
+*.gbl
+*.gto
+*.gbo
+*.gts
+*.gbs
+*.gtp
+*.gbp
+*.gko
+*.gm1
+*.gpt
+*.gpb
+*.gbrjob
+*.xln
+*.drl
+*.step
+*.stp
+*.wrl
+*.glb
+
+# Purchasing preferences, MPN decisions, cart journals and export folders
+# belong in EDA_AGENT_EXPORT_DIR, outside the repository. These catch a copy
+# made here. Scoped to the folders the tools write
+# (purchasing/mpn_decisions/<project id>.json, purchasing/journal/), so no
+# source file is touched.
+/config.toml
+**/purchasing/mpn_decisions/
+**/purchasing/journal/
+/exports/
+/bom/
+
+# The distributor cache is one SQLite file (distributor-cache.sqlite3, under
+# %LOCALAPPDATA% by default, anywhere with EDA_AGENT_DISTRIBUTOR_CACHE_FILE).
+# *.sqlite3 is covered above; these are its journal files and any other
+# spelling of it. Not docs/DISTRIBUTOR_CACHE_SCHEMA.md or the cache module,
+# which use underscores.
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+distributor-cache*

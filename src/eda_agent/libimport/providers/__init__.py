@@ -30,6 +30,7 @@ from typing import Any
 
 from eda_agent.libimport.providers.base import (
     ALTIUM_CONVERTIBLE_FORMATS,
+    AmbiguousPart,
     PartHit,
     PartProvider,
     ProviderError,
@@ -53,6 +54,7 @@ from eda_agent.libimport.providers.public_libraries import (
 )
 
 __all__ = [
+    "AmbiguousPart",
     "PartHit",
     "PartProvider",
     "ProviderError",

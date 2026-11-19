@@ -4,6 +4,26 @@ MCP server that lets an AI (or any MCP-compatible client) **interact with a live
 
 > **⚠️ Experimental.** Not all tools are extensively tested. Some can crash the Altium DelphiScript engine. See [Known limitations](#known-limitations) before using on any design you haven't backed up.
 
+## Privacy: never commit real design data
+
+> **🔒 This repository is public.** Nothing that identifies or describes a real design may be committed to it, whether by hand or by an AI assistant working in your clone. That applies to code, tests, fixtures, documentation, comments, examples, commit messages and issue or pull request text.
+
+**Never put these in the repository:**
+
+- Real Altium or KiCad design files: projects, schematics, PCBs, libraries and their backups or generated folders.
+- Bills of materials, netlists and manufacturing exports: Gerber, drill, pick-and-place, STEP, spreadsheets and CSV files.
+- Purchasing data: purchasing plans, distributor reports and caches, carts and cart journals, `config.toml` with your preferences, quantities and prices.
+- Credentials: API keys, client secrets, tokens, passwords and key files.
+- Identifying project metadata: project, document and library names, file paths of a real design, designators, nets, and counts or sizes taken from it.
+
+**Where things go instead.** Exports, purchasing preferences and cart journals are written to the folder named by the `EDA_AGENT_EXPORT_DIR` environment variable, outside the repository (by default `EDA Agent\exports` under your home folder). The tools refuse to write an export inside the clone. Credentials live only in environment variables.
+
+**Allowed.** EDA Agent's own paths and scripts, synthetic examples and test fixtures made up for the purpose (for example a board called `Example-Board`), and public manufacturer part numbers used as examples when nothing ties them to a project.
+
+**Before you commit,** run `git status`, read what is staged, and never force-add an ignored file (`git add -f`). `.gitignore` blocks the usual file types as a safety net, not as a substitute for looking. If something private was committed, do not push; ask for help cleaning the history first.
+
+The install procedure in [`docs/INSTALL.md`](https://github.com/thomas92109/eda-agent/blob/main/docs/INSTALL.md) follows the same rules.
+
 ## Demo
 
 Claude Code with eda-agent designs a round 54 mm, 4-layer RGB LED display board in Altium Designer from a written spec to manufacturing files. It builds a project library from scratch, with a symbol, footprint, 3D model and part numbers for every part. It then draws the schematic, places 61 LEDs in rings, routes the USB pair at 90 ohms, pours stitched ground, gets DRC clean and writes the Gerbers, drill, BOM, pick-and-place and STEP files. A correction round follows: a review prompt lists issues from the first pass, and Claude reroutes the whole USB pair as a coupled differential pair, gives every part a realistic 3D model from its datasheet drawing and finishes the schematics with title blocks. The result would still get a manual tweaking pass before prototyping, but it is already at a very good stage.
@@ -87,6 +107,10 @@ This is **not** a batch tool that opens a project, runs a script, and exits. It'
 The server picks a backend at startup (`EDA_AGENT_BACKEND`, default `altium`), so one install drives any of them. See [EDA backends](#eda-backends).
 
 ## Installation
+
+**With Claude Code, the quickest way:** clone this repository, open Claude Code in the folder and ask it to *install EDA Agent*. Claude follows [`docs/INSTALL.md`](https://github.com/thomas92109/eda-agent/blob/main/docs/INSTALL.md) and guides you through each step: the Python environment, the Altium scripts, the MCP registration, a private folder for exports, and optional DigiKey and Mouser credentials entered at a hidden prompt. The same file is the manual procedure if you prefer to follow it yourself.
+
+The rest of this section is the reference for installing by hand.
 
 From PyPI, into an environment of its own so its dependencies never clash with your other Python tools:
 
