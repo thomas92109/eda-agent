@@ -101,6 +101,10 @@ _SET_ASIDE = {
     "part_cart_get": "reaches Mouser",
     "part_purchasing_analyze": "reaches distributor networks",
     "part_purchasing_plan": "reaches distributor networks",
+    "part_purchasing_export_csv": "reaches distributor networks and writes a file",
+    "part_purchasing_cart_prepare": "reaches distributor networks",
+    "part_purchasing_mpn_decisions": "reaches distributor networks and writes a decisions file",
+    "part_purchasing_cart_commit": "writes a list or cart at a distributor",
 }
 _NAMES = sorted(n for n in _TOOLS if n not in _SET_ASIDE)
 

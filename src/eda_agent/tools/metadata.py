@@ -289,6 +289,14 @@ INTERACTION_OVERRIDES = {
     # readonly.
     "part_cart_create": SILENT,
     "part_cart_add": SILENT,
+    # Writes one CSV into the export folder (an export, like proj_export_*).
+    # part_purchasing_cart_prepare only reads and stays readonly. The commit
+    # writes a list or cart at a distributor and its journal.
+    "part_purchasing_export_csv": SILENT,
+    # Records or deletes a project's close part number decisions in the
+    # export folder; status and list only read.
+    "part_purchasing_mpn_decisions": SILENT,
+    "part_purchasing_cart_commit": SILENT,
     # Writes the downloaded PDF and its sidecar into the workspace cache.
     # Filed under parts, which is offline and so falls back to READONLY;
     # a tool that writes files is SILENT here, as part_fetch is.

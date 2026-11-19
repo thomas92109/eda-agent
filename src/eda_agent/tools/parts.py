@@ -589,9 +589,3 @@ def register_parts_tools(mcp):
             MOUSER_CART_API_KEY.
         """
         return _cart_call(provider, lambda cart: cart.get_cart(cart_key))
-
-    # The purchasing workflow reads the BOM and these same catalogues;
-    # its two tools are part tools and register with them.
-    from .purchasing import register_purchasing_tools
-
-    register_purchasing_tools(mcp)

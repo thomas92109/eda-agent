@@ -229,6 +229,10 @@ returned part of the project empty; `incomplete_reason` says which.
 
 ## The purchasing BOM as a CSV file
 
+This is the Standard BOM: one assembly, no distributor, five default columns.
+For assemblies, quantities, prices and review reasons see
+[The Purchasing BOM](#the-purchasing-bom-assemblies-quantities-and-review).
+
 `proj_export_purchasing_bom_csv` writes the same BOM to a CSV file. It reads
 the project the way `proj_get_bom(mode="purchasing")` does and writes Altium's
 own values with Python's `csv` module: nothing is retyped, guessed, merged or
@@ -476,7 +480,10 @@ rather than looking like a clean download.
 
 Two read-only tools connect the purchasing BOM to the distributors. Neither
 makes a cart or a list; a person reads the plan and then uses
-`part_cart_create` or `part_list_add`.
+`part_cart_create` or `part_list_add`. They keep their own defaults
+(`build_quantity` 1, `prefer` lowest); the configured workflow with
+assemblies, overage, allowance and review reasons is
+[The Purchasing BOM](#the-purchasing-bom-assemblies-quantities-and-review).
 
 | Tool | What it does |
 |---|---|
@@ -605,6 +612,390 @@ same cart. It is not a confirmed Mouser API bug. Until it is understood:
 - Treat an empty readback as possibly a site-side change, not as proof that
   the API insert failed. Check the cart on Mouser's site before retrying an
   insert, so that quantities are not doubled.
+
+## The Purchasing BOM: assemblies, quantities and review
+
+Three things are easy to confuse:
+
+| | Standard BOM | Purchasing BOM | Cart or list |
+|---|---|---|---|
+| Tool | `proj_export_purchasing_bom_csv` | `part_purchasing_export_csv` | `part_purchasing_cart_prepare`, then `part_purchasing_cart_commit` |
+| Assemblies | always one | configurable, default 2 | as the Purchasing BOM |
+| Distributor | never asked | read only: DigiKey and Mouser | one account is written, after approval |
+| Result | a CSV, five default columns | a CSV with quantities, prices, status, reasons | a DigiKey list or a Mouser cart |
+
+The Standard BOM is unchanged. Nothing here orders anything or checks out.
+
+### What a row is
+
+`part_purchasing_export_csv` writes one row per BOM line: every fitted line,
+every unresolved component (one row each, status `blocked`, with Altium's
+own reason), and, with `include_dnp`, the parts the variant does not fit
+(Required Qty 0, status `not_fitted`, not looked up, not bought). A line
+that cannot be bought is a row with its status and every reason: nothing is
+hidden, split, or filled with another manufacturer's part. Only the exact
+manufacturer part number of the BOM is used, unless the user approves a close
+variant of it ([below](#close-part-number-matches)). A suggested replacement
+is shown as text and never ordered.
+
+Columns are chosen and ordered with `columns`, as for the Standard BOM:
+`bom_quantity`, `required_qty`, `purchase_qty`, `surplus`, `part_number`,
+`manufacturer`, `description`, `reference_designators`, `footprint`,
+`distributor`, `distributor_sku`, `packaging`, `unit_price`, `extended_cost`,
+`currency`, `stock`, `lifecycle`, `purchasing_status`, `review_reasons`,
+`review_detail`, `quantity_rule`, `price_break`, `retrieved_at`. Left out,
+the configured columns are used, or a built-in set. The file is UTF-8 with a
+byte order mark and CRLF line ends, text from a distributor is neutralized
+against spreadsheet formulas, and it goes through the same export folder,
+repository guard and never-overwrite naming as the Standard BOM. The default
+name is `<project>_purchase_BOM_<n>x.csv`.
+
+Totals in the reply are per currency and never added across currencies.
+Shipping, taxes, tariffs and fees are not included.
+
+### How the quantity is chosen
+
+Required Qty is the BOM quantity times the number of assemblies. Purchase Qty
+starts there and is never below it. All arithmetic is exact (`Decimal`).
+
+1. It is raised to the offer's minimum order and order multiple (a reel sold
+   whole counts its standard package).
+2. An inexpensive part (unit price at or below `overage_max_unit_price`, in the
+   overage currency) gets overage: `ceil(required * overage_factor)`.
+3. The cost of that quantity is the baseline. A price break above the one in
+   force is then looked at:
+   * A break that costs LESS than the baseline is taken wherever it is on the
+     price ladder, at any unit price and however far above the requirement it
+     lies. The cheapest wins.
+   * Otherwise a break that costs at most
+     `baseline * (1 + extra_spend_percent / 100) + extra_spend_flat` is taken,
+     among the next `price_break_window` feasible breaks, the furthest one.
+     This holds for expensive parts as well as cheap ones.
+4. There is no limit on how many times the requirement the quantity may reach.
+   Stock, a maximum order quantity, the minimum, the multiple and the
+   packaging are never exceeded, and a break stock rules out uses no position
+   of the look-ahead.
+
+Worked example (defaults, 25 per assembly, 2 assemblies, so 50 required): at
+0.10 each up to 999 and 0.011 from 1000, overage gives a baseline of 55 at 5.50
+and an allowance of 11.05; 1000 at 0.011 costs 11.00, so 1000 are bought, 20
+times the requirement, and the row is `ready` with the surplus and the reason
+shown in it.
+
+Stock decides what is possible. If a distributor's stock cannot cover the
+requirement, the other is tried; if neither can, the line is blocked, kept,
+and shows the quantity it would need, with no partial purchase. If stock
+covers the requirement but not the overage, the overage shrinks to the
+largest valid quantity stock allows.
+
+### Which distributor
+
+`prefer` is `digikey` by default: DigiKey gets the line whenever it can supply
+the requirement and give an acceptable offer, and Mouser, marked
+`FALLBACK_DISTRIBUTOR`, when it cannot. `mouser` swaps the roles and `lowest`
+takes the lower final cost (with two currencies the preference order decides,
+and the line says so). A line is never split between distributors.
+
+### Close part number matches
+
+When no distributor lists a line's exact manufacturer part number, a
+distributor often lists one that differs a little: the same letters and
+digits with other punctuation (the BOM says `ABC123X`, the distributor
+`ABC-123-X`), or the same number with something added at the end. Those near
+misses are found and sorted for a person to judge. They are **advice, never
+permission**: a candidate is used in a purchase calculation, a CSV row or a
+cart only when the user has approved that exact original and candidate pair,
+and the number in the Altium schematic is never changed (no Altium document is
+touched).
+
+The search runs only for a line no distributor matched exactly, and keeps only
+what a distributor lists whose letters and digits equal the BOM's number or
+begin with them and go on. Exact matches come first and are never searched
+for alternatives.
+
+| Label | What it means | Needs |
+|---|---|---|
+| Formatting Match | The letters and digits are identical; only punctuation differs (`USB4110GFA` and `USB4110-GF-A`). | A real listing, and the manufacturer the same (or a known short name). |
+| Likely Match | The candidate adds a suffix that is a recognised packaging marker, such as `-TR` for tape and reel. | The suffix is a recognised marker, the distributor's own packaging for the candidate is tape or reel, the manufacturer is identical, and nothing contradicts it. |
+| Possible Match | A short suffix whose meaning is not verified (`ABC123A5`), or a recognised marker the distributor does not confirm. | Verify the variant in the manufacturer's ordering information. |
+| Uncertain Match | A long suffix (5 or more letters and digits) that is not a packaging marker, a suffix that continues the digits of the base number with no separator (`LM358` and `LM3584`), or a manufacturer name that differs. | Treat as a probably different part until proved otherwise. |
+
+Suffix length is only one input and never decides alone: a four letter
+`-REEL` that the distributor confirms is Likely, a one letter unknown suffix is
+only Possible. No percentage or score is given: each candidate has its label,
+the evidence for it and what is still doubtful. Packaging markers (`TR`,
+`REEL`, and a few makers' own, such as Diodes' `-7` and `-13` or TI's `R`) only
+count when the distributor's packaging confirms them. The manufacturer name is
+evidence, not a filter: a known short form (`GCT` for Global Connector
+Technology) is noted and treated like a partial match, and any other differing
+name is listed but never rated above Uncertain. Descriptions are compared too,
+but as weak evidence only (distributors abbreviate them), so they are shown and
+never change a label.
+
+All candidates are presented together at the end of the analysis, most likely
+first (formatting, likely, possible, uncertain; then identical manufacturer,
+then in stock), in the reply (`close_matches`) and in a companion file next to
+the CSV (`<name>_close_matches.csv`) with, for each: the original number, the
+candidate, the manufacturer, the suffix difference, the label, what the
+difference means, the distributor, stock, unit price at the quantity needed,
+the SKU, whether it is approved, the evidence and the doubts, and the line and
+designators it belongs to.
+
+#### Who authorizes a match, and for which project
+
+A candidate is used only when it is authorized, in this order:
+
+1. **The project's manual rejection** beats everything, for that project only.
+2. **The project's manual approval.**
+3. **An approval given for one call** (`approve_mpn_variants`): nothing is
+   remembered.
+4. **A global rule** in `config.toml` (below), which applies to every project.
+
+Manual approvals and rejections belong to ONE Altium project and never reach
+another. A project is identified by a hash of the canonical, absolute path of
+its `.PrjPcb` file (symbolic links and `..` resolved, case and slashes folded on
+Windows), never by the file name alone: two projects that are both called
+`Board.PrjPcb`, in different folders, are two projects, and the same part
+number in the second one asks again. A project that cannot be identified (a
+relative `project_path`, or BOM `lines` given directly) has no manual
+decisions: only a global rule or an approval for the call applies.
+
+Decisions are kept locally, outside Git, in the export folder
+(`EDA_AGENT_EXPORT_DIR`): `purchasing/mpn_decisions/<project id>.json`. The file
+holds part numbers, the decision, when and how, and the project path; it holds
+no quantity, price, SKU or credential. A file that names another project is
+refused. They are recorded with `part_purchasing_mpn_decisions`:
+
+```
+part_purchasing_mpn_decisions(action="status")           # the candidates and decisions
+part_purchasing_mpn_decisions(action="approve", pairs=[
+    {"original_mpn": "USB4110GFA", "candidate_mpn": "USB4110-GF-A"}],
+    note="checked the datasheet")
+part_purchasing_mpn_decisions(action="reject", pairs=[...])
+part_purchasing_mpn_decisions(action="revoke", pairs=[...])   # also "list"
+```
+
+A pair must be a candidate found now (its letters and digits equal the original's
+or begin with them). It names the original number and the candidate's exact
+spelling: another spelling of the candidate is not decided. Once recorded, the
+Purchasing BOM export, a later analysis, the DigiKey list and the Mouser cart
+tools use it without being asked again, with no argument to pass.
+
+A manual decision is bound to what it was made about: the component's
+manufacturer and part number, and the candidate's spelling and manufacturer.
+If any of them is no longer the same it is **stale**: reported (in the reply's
+`mpn_decisions` and as a warning) and NOT applied, never silently. That covers
+a changed manufacturer or part number in the schematic, a candidate that a
+distributor now lists under another maker, and a candidate that is no longer
+listed. A stale decision is not deleted: decide again, or revoke it. A decision
+for a number that now matches exactly is reported as unused. A stale manual
+decision does not block an authorization from a global rule or the call, which
+stand on their own.
+
+These decisions authorize one thing: which part number may be looked up and
+ordered. They are not part of any purchasing plan or cart fingerprint, and
+authorize no quantity, price or destination: a previously approved number
+still needs a fresh approval of the proposal's figures, and a different list or
+cart is a different proposal.
+
+An approved line is read like any exact match. Its row keeps the BOM's number in
+Part Number, shows the number ordered in Matched MPN, and records in MPN
+Approval how it was authorized (`project approval`, `this call only` or
+`global rule: Likely Match`) and in MPN Approval Audit the original number and
+maker, the matched number and maker, the label, the method, when it was decided,
+the decision id, the project id and the note. The companion file has the same
+for every candidate, rejected ones included. The line carries
+`APPROVED_MPN_VARIANT`; when the distributor's name for the maker differs from
+the BOM's it is a `review` line, so it must be named in `include_lines` for a
+cart. In a cart proposal the item shows both numbers and the distributor is
+asked to hold the number actually ordered. Without a decision a line with
+candidates stays `blocked` (`MPN_NOT_FOUND`) with the information reason
+`CLOSE_MATCH_AVAILABLE`; when every candidate was rejected it carries
+`CLOSE_MATCH_REJECTED` instead and is not asked about again.
+
+#### Global rules
+
+`config.toml` may authorize some matches for every project:
+
+```
+[matching]
+auto_approve = ["likely", "formatting"]
+```
+
+Only `formatting` (punctuation differs) and `likely` (a confirmed packaging
+suffix) can be named, and only for a candidate whose manufacturer name is
+identical: a known short form, a differing name, a possible or an uncertain
+match always needs a person. Anything else in the list is refused with a
+warning. The rule holds no part number and no project, the default is empty,
+and a project's manual rejection overrides it for that project.
+
+### Settings: config.toml
+
+The first time a purchasing tool needs it, `config.toml` is created in the
+export folder (`EDA_AGENT_EXPORT_DIR`, else `EDA Agent/exports` under the
+home folder), with the defaults and comments. It is never rewritten: edit it
+freely. For each setting separately, an argument of the same name overrides
+the file, and the file overrides the default; every reply says which one a
+value came from.
+
+| Setting (file key) | Argument | Default |
+|---|---|---|
+| `assemblies.count` | `assemblies` | 2 |
+| `overage.factor` | `overage_factor` | 1.10 |
+| `overage.max_unit_price` | `overage_max_unit_price` | 5.00 |
+| `overage.currency` | `overage_currency` | USD |
+| `upgrade.extra_spend_percent` | `extra_spend_percent` | 10 |
+| `upgrade.extra_spend_flat` | `extra_spend_flat` | 5.00 |
+| `upgrade.extra_spend_currency` | `extra_spend_currency` | USD |
+| `upgrade.price_break_window` | `price_break_window` | 2 |
+| `distributors.prefer` | `prefer` | digikey |
+| `review.large_surplus_ratio` | `large_surplus_ratio` | not set (no warning) |
+
+The percentage, the fixed amount and the window are independent, and zero is
+valid for each. The fixed amount applies only to offers in its currency. The
+file never holds credentials or design data: credentials stay in the
+environment variables, a key that looks like one is refused, and an invalid or
+unknown key is reported and ignored, never fatal. `[review.severity]` may
+change the severity of the reasons marked below, and never of the fixed ones.
+
+### Status and review reasons
+
+A row's status comes from its reasons: any `blocking` reason makes it
+`blocked`, otherwise any `review` reason makes it `review`, otherwise it is
+`ready`; `info` never changes it. A part may carry several reasons. A large
+surplus alone never blocks a line or asks for approval. With
+`large_surplus_ratio` set, a row above it gets `LARGE_SURPLUS`, information
+only (a user may raise it to review, never to blocking).
+
+The fixed reasons cannot be lowered by any setting, so an end of life,
+obsolete or discontinued part can never become eligible for a cart through a
+configuration change.
+
+| Code | Default | Can a setting change it | Meaning |
+|---|---|---|---|
+| `UNRESOLVED_COMPONENT` | blocking | no, fixed | The component has no usable Manufacturer and Part Number |
+| `MISSING_MANUFACTURER` | blocking | no, fixed | No usable Manufacturer |
+| `MISSING_MPN` | blocking | no, fixed | No usable Part Number |
+| `MPN_NOT_FOUND` | blocking | no, fixed | No distributor lists the exact manufacturer part number |
+| `MANUFACTURER_MISMATCH` | blocking | no, fixed | The number exists only under another manufacturer |
+| `AMBIGUOUS_MANUFACTURER` | blocking | no, fixed | Two manufacturers could each be the BOM's |
+| `MANUFACTURER_PARTIAL_MATCH` | review | yes | The manufacturer names agree only as a prefix |
+| `BOM_CONFLICT` | review | yes | The BOM data for this line conflicts |
+| `BOM_INCOMPLETE` | blocking | no, fixed | Altium's read of the project was cut short; quantities may be short |
+| `DUPLICATE_SKU` | blocking | no, fixed | Two BOM lines resolve to one distributor number |
+| `OUT_OF_STOCK` | blocking | no, fixed | No matched distributor has the part in stock |
+| `INSUFFICIENT_STOCK` | blocking | no, fixed | No matched distributor has enough stock for the requirement |
+| `STOCK_NOT_STATED` | review | yes | The distributor states no stock for this offer |
+| `OVERAGE_LIMITED_BY_STOCK` | info | yes | The overage was reduced to what stock allows |
+| `OVERAGE_SKIPPED_CURRENCY` | info | yes | No overage: the offer is not in the overage currency |
+| `ALLOWANCE_FLAT_SKIPPED` | info | yes | The fixed allowance was left out: the offer is not in the allowance currency |
+| `FALLBACK_DISTRIBUTOR` | info | yes | The preferred distributor could not supply the line |
+| `MISSING_PRICE` | blocking | no, fixed | No usable price |
+| `MISSING_CURRENCY` | blocking | no, fixed | A price with no currency |
+| `CURRENCY_MIXED` | review | yes | The distributors price in different currencies; no cost comparison was made |
+| `MOQ_ADJUSTED` | info | yes | The quantity was raised to the minimum |
+| `MULTIPLE_ADJUSTED` | info | yes | The quantity was raised to the order multiple |
+| `MOQ_NOT_STATED` | review | yes | No minimum is stated; the first price break was taken |
+| `MULTIPLE_NOT_STATED` | review | yes | No multiple is stated; the reel's standard package was taken |
+| `PACKAGING_REEL_WHOLE` | info | yes | A full reel is sold whole |
+| `PURCHASE_LIMIT_EXCEEDED` | blocking | no, fixed | The requirement exceeds the distributor's maximum order quantity |
+| `LARGE_SURPLUS` | info | info or review | The purchase quantity is far above the requirement |
+| `LIFECYCLE_NRND` | review | yes | Not recommended for new designs |
+| `LIFECYCLE_LAST_TIME_BUY` | review | yes | Last time buy |
+| `LIFECYCLE_EOL` | blocking | no, fixed | End of life |
+| `LIFECYCLE_OBSOLETE` | blocking | no, fixed | Obsolete |
+| `DISTRIBUTOR_DISCONTINUED` | blocking | no, fixed | Discontinued by the distributor |
+| `LIFECYCLE_UNKNOWN` | review | yes | No distributor states a lifecycle status this project knows |
+| `LIFECYCLE_NOT_STATED` | info | yes | One distributor states no lifecycle status |
+| `LIFECYCLE_PRELIMINARY` | info | yes | Preliminary or new product |
+| `DISTRIBUTOR_UNAVAILABLE` | info | yes | One distributor could not answer |
+| `NO_DISTRIBUTOR_DATA` | blocking | no, fixed | No distributor answered for this line |
+| `STALE_PRICING` | info | yes | The figures were reused from the cache and are old |
+| `CLOSE_MATCH_AVAILABLE` | info | yes | Close part number candidates are listed; none is used until approved |
+| `CLOSE_MATCH_REJECTED` | info | yes | Every close candidate was rejected for this project |
+| `APPROVED_MPN_VARIANT` | info | yes | A close variant of the BOM's part number, approved by the user, is ordered |
+| `SETUP_QUANTITY_RAISED` | info | yes | The quantity was raised to a feeder or setup minimum |
+
+### Putting the Purchasing BOM in a list or cart
+
+Two steps, with a person between them. Neither places an order.
+
+1. `part_purchasing_cart_prepare` READS ONLY. It builds the Purchasing BOM from
+   fresh distributor figures (never the cache) and returns a proposal: the
+   items that would go in, the lines that would not and why, the totals, and a
+   `proposal_id`.
+2. `part_purchasing_cart_commit` writes to one account, only with
+   `approved=True` and the `proposal_id` of a proposal the user has read.
+
+Which lines go in: a `ready` line bought at the chosen distributor. A
+`review` line goes in only when its line id is named in `include_lines`. A
+`blocked` line (unresolved, no match, out of stock, no price, end of life,
+obsolete, discontinued) never goes in, even when named. To buy everything at
+one distributor, set `prefer` to it. Where it goes: Mouser needs `cart_key`
+(an existing cart) or `create_new=True`; DigiKey needs `list_id`, or
+`create_new=True` with `list_name`. A DigiKey list is not a cart: it is opened
+in the account to make one.
+
+The `proposal_id` is a hash of the distributor, the target, and for every item
+its SKU, quantity, packaging, unit price, currency, lifecycle status and
+designators. `commit` rebuilds the proposal from fresh figures first; if the id
+no longer matches, nothing is written and the new proposal is returned for the
+user to read again.
+
+Mouser adds to a line when a part is inserted again, so a commit works to
+target totals: it reads the cart, adds only what is missing, and never lowers
+or removes a quantity. Committing the same proposal again after a timeout
+adds nothing twice. A journal in the export folder (`purchasing/journal`, one
+file per proposal, no credentials) keeps what was meant and what was seen, and
+the journal is written before the first write. Every item is read back and
+reported as verified or not.
+
+Unknown states are handled conservatively. A cart that reads back empty, or
+lower than the journal says it held (a Mouser cart has read back empty after
+being opened in a browser), is not touched until the user has looked at it and
+the call passes `cart_state_checked=True`. A cart or list creation that may
+have happened is never repeated: the user finds it and prepares a new proposal
+naming its key. A DigiKey line already in the list with another quantity is
+reported and left alone.
+
+### Example calls
+
+A Standard BOM (one assembly, five columns, no distributor):
+
+```
+proj_export_purchasing_bom_csv()
+```
+
+A Purchasing BOM for 5 boards, DigiKey preferred, a wider allowance, and the
+columns a buyer wants:
+
+```
+part_purchasing_export_csv(assemblies=5, extra_spend_percent=25,
+    columns=["required_qty", "purchase_qty", "part_number", "manufacturer",
+             "distributor", "distributor_sku", "unit_price", "extended_cost",
+             "purchasing_status", "review_reasons"])
+```
+
+The same, using a close part number the user checked (see above): record the
+decision once for the project, then export as usual (or approve for one call
+with `approve_mpn_variants=[{"original_mpn": "ABC123", "candidate_mpn":
+"ABC123-TR"}]`):
+
+```
+part_purchasing_mpn_decisions(action="approve", pairs=[
+    {"original_mpn": "ABC123", "candidate_mpn": "ABC123-TR"}])
+part_purchasing_export_csv()
+```
+
+Preparing a Mouser cart (then, after the user agrees, the commit with the
+returned id):
+
+```
+part_purchasing_cart_prepare(distributor="mouser", prefer="mouser",
+    create_new=True)
+part_purchasing_cart_commit(proposal_id="<the id returned>", approved=True,
+    distributor="mouser", prefer="mouser", create_new=True)
+```
 
 ## Getting a KiCad-format part into Altium
 

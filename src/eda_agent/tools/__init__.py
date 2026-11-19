@@ -48,6 +48,8 @@ from .eda import register_eda_tools
 from .calc import register_calc_tools, register_physics_calc_tools
 from .plan import register_plan_tools
 from .parts import register_parts_tools
+from .purchasing import register_purchasing_tools
+from .purchasing_cart import register_purchasing_cart_tools
 from .live import register_live_tools
 from .footprint import register_footprint_tools
 from .conventions import register_convention_tools
@@ -357,6 +359,11 @@ def _register_surface(mcp, backend: str = DEFAULT_BACKEND) -> str:
     # Part sourcing is EDA-agnostic: the providers answer about parts, not
     # about Altium or KiCad, so both backends get them.
     register_parts_tools(mcp)
+    # The purchasing workflow reads the BOM and the same catalogues, so it
+    # registers beside the part tools. The cart handoff is its own module:
+    # it is the only one here that can write a distributor account.
+    register_purchasing_tools(mcp)
+    register_purchasing_cart_tools(mcp)
     # The live layout view draws the engine's board model and the decision
     # log, neither of which belongs to one EDA tool, so every backend gets it.
     register_live_tools(mcp)
@@ -397,6 +404,8 @@ __all__ = [
     "register_update_tools",
     "register_length_units_tools",
     "register_parts_tools",
+    "register_purchasing_tools",
+    "register_purchasing_cart_tools",
     "register_live_tools",
     "register_footprint_tools",
     "register_convention_tools",

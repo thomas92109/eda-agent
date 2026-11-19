@@ -33,6 +33,7 @@ __all__ = [
     "export_files",
     "repo_root",
     "validated_path",
+    "working_file",
 ]
 
 EXPORT_DIR_ENV = "EDA_AGENT_EXPORT_DIR"
@@ -174,3 +175,25 @@ def claimed(paths: list[Path]) -> Iterator[list[Path]]:
         for path in paths:
             path.unlink(missing_ok=True)
         raise
+
+
+def working_file(category: str, name: str, create: bool = True) -> Path:
+    """A file the workflow keeps and rewrites in place, such as a journal.
+
+    It lives under ``category`` in the export folder and passes the same
+    guard against the public repository. It is not an export: the
+    never-overwrite rule does not apply, and the caller replaces it
+    atomically. ``category`` and ``name`` are plain names, never paths.
+    The folder is created unless ``create`` is false (a read).
+    """
+    for part in (*str(category).replace("\\", "/").split("/"), name):
+        if not part or part in (".", "..") or any(
+                c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                         "0123456789._-" for c in part):
+            raise ExportPathError(
+                f"{part!r} is not a plain folder or file name")
+    folder = export_dir().joinpath(*str(category).replace("\\", "/").split("/"))
+    target = validated_path(folder / name)
+    if create:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    return target

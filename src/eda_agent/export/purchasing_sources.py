@@ -26,6 +26,8 @@ import re
 from typing import Any, Callable, Optional
 
 from eda_agent.libimport.providers import _cache
+from eda_agent.export import purchasing_decisions as _decisions
+from eda_agent.export import purchasing_matching as _matching
 from eda_agent.libimport.providers.base import (
     PartHit,
     ProviderError,
@@ -286,6 +288,15 @@ def _read_one(name: str, provider: Any, lookup: Callable,
         "distributor_description": hit.description,
         "lifecycle": (sourcing.get("lifecycle") or {}).get("status"),
         "lifecycle_text": (sourcing.get("lifecycle") or {}).get("raw"),
+        # The distributor's own flags, the last-buy date and its suggested
+        # replacement (text only: nothing is ever ordered in its place).
+        "lifecycle_discontinued": (sourcing.get("lifecycle") or {}).get(
+            "discontinued"),
+        "lifecycle_end_of_life": (sourcing.get("lifecycle") or {}).get(
+            "end_of_life"),
+        "last_buy_date": (sourcing.get("provider_specific") or {}).get(
+            "last_buy_date"),
+        "suggested_replacement": sourcing.get("suggested_replacement"),
         "stock": sourcing.get("stock"),
         "lead_time_weeks": (sourcing.get("lead_time") or {}).get("weeks"),
         "product_url": sourcing.get("product_url"),
@@ -301,9 +312,153 @@ def _read_one(name: str, provider: Any, lookup: Callable,
     return entry
 
 
+def _close_hits(name: str, provider: Any, number: str) -> list[PartHit]:
+    """What a distributor lists that might be a near miss of ``number``:
+    its keyword search for the number and for its leading letters and
+    digits (a distributor may punctuate the number differently), and, at
+    Mouser, the numbers that begin with it. Nothing here is a match: every
+    hit is judged by ``purchasing_matching.classify`` afterwards."""
+    hits: list[PartHit] = []
+    queries = [number]
+    short = _matching.prefix_query(number)
+    if short:
+        queries.append(short)
+    for query in queries:
+        try:
+            hits.extend(provider.search(query, 50))
+        except ProviderUnavailable:
+            raise
+        except ProviderError:
+            continue
+    if name == "mouser":
+        try:
+            hits.extend(provider._post(provider._PART_URL, {
+                "SearchByPartRequest": {"mouserPartNumber": number,
+                                        "partSearchOptions": "BeginsWith"}}))
+        except ProviderUnavailable:
+            raise
+        except ProviderError:
+            pass
+    return hits
+
+
+def _close_candidates(name: str, hits: list[PartHit], entry: dict[str, Any]
+                      ) -> list[dict[str, Any]]:
+    out, seen = [], set()
+    for hit in hits:
+        match = manufacturer_match(entry["manufacturer"], hit.manufacturer)
+        if match == "different" and _matching.maker_alias(
+                entry["manufacturer"], hit.manufacturer):
+            match = "alias"
+        offers = _offers(hit)
+        sourcing = hit.sourcing or {}
+        stock = sourcing.get("stock")
+        if not isinstance(stock, int):
+            known = [o["stock"] for o in offers
+                     if isinstance(o.get("stock"), int)]
+            stock = max(known) if known else None
+        found = _matching.classify(
+            bom_manufacturer=entry["manufacturer"],
+            bom_mpn=entry["part_number"],
+            bom_description=entry.get("description", ""),
+            candidate_mpn=hit.mpn, candidate_manufacturer=hit.manufacturer,
+            candidate_description=hit.description or "",
+            manufacturer_match=match, offers=offers, distributor=name,
+            required_quantity=max(int(entry.get("required_quantity") or 1), 1),
+            stock=stock)
+        if found is None:
+            continue
+        key = (name, "".join(hit.mpn.split()).casefold(),
+               " ".join(_maker_words(hit.manufacturer)))
+        if key in seen:
+            continue
+        seen.add(key)
+        found["lifecycle"] = (sourcing.get("lifecycle") or {}).get("status")
+        out.append(found)
+    return out
+
+
+def _close_for_line(entry: dict[str, Any], sources: dict, stopped: dict,
+                    state: dict, authorizer: Any, seen_pairs: set) -> bool:
+    """Close candidates for one BOM line no distributor matched exactly,
+    and the authorized ones read as matches. Returns whether a distributor
+    was searched.
+
+    Each candidate is judged by the ``authorizer`` (a project's manual
+    decision, an approval for this call, or a global rule). A rejected one
+    is listed and never used."""
+    entry["close_matches"] = []
+    asked = entry["distributors"]
+    if any(d["status"] == "matched" for d in asked.values()):
+        return False
+    searched = False
+    found: list[dict[str, Any]] = []
+    for name, (provider, lookup) in sources.items():
+        if name in stopped or asked.get(name, {}).get("status") != "not_found":
+            continue
+        try:
+            hits = _close_hits(name, provider, str(entry["part_number"]))
+        except ProviderUnavailable as exc:
+            stopped[name] = str(exc)
+            continue
+        except Exception:  # noqa: BLE001 - one line only
+            continue
+        searched = True
+        found.extend(_close_candidates(name, hits, entry))
+    for cand in found:
+        pair = _matching.approval_key(cand["original_mpn"],
+                                      cand["candidate_mpn"])
+        seen_pairs.add(pair)
+        verdict = authorizer.judge(entry, cand)
+        cand["decision"] = verdict
+        if verdict["status"] == "rejected":
+            cand["rejected"] = True
+            continue
+        if verdict["status"] != "approved":
+            continue
+        cand["approved"] = True
+        cand["approval"] = verdict
+        name = cand["distributor"]
+        provider, lookup = sources[name]
+        # A candidate whose maker name differs is read under the
+        # distributor's own name for it: the user's approval of this pair
+        # is what accepts it, and the line is marked for review.
+        maker = cand["manufacturer"] if cand.get("manufacturer_override") \
+            else entry["manufacturer"]
+        try:
+            read = _read_one(name, provider, lookup, maker,
+                             cand["candidate_mpn"])
+        except Exception as exc:  # noqa: BLE001
+            read = {"status": "error", "reason": str(exc)}
+        if read.get("status") != "matched":
+            cand["used"] = False
+            cand["approval_note"] = (
+                "the approved number could not be read as a match: "
+                + str(read.get("reason") or read.get("status")))
+            continue
+        read["mpn_variant"] = {
+            "original_mpn": entry["part_number"],
+            "candidate_mpn": read.get("mpn") or cand["candidate_mpn"],
+            "label": cand["label"], "kind": cand["kind"],
+            "difference": cand["difference"], "meaning": cand["meaning"],
+            "manufacturer_differs": bool(cand.get("manufacturer_override")),
+            "bom_manufacturer": entry["manufacturer"],
+            "distributor_manufacturer": cand["manufacturer"],
+            "approved": True, "approval": verdict}
+        entry["distributors"][name] = read
+        cand["used"] = True
+        state[name]["matched"] += 1
+        state[name]["from_cache" if read.get("cached") else "read_now"] += 1
+    entry["close_matches"] = _matching.order(found)
+    return searched
+
+
 def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
                refresh: bool = False,
-               distributors: tuple = DISTRIBUTORS) -> dict[str, Any]:
+               distributors: tuple = DISTRIBUTORS,
+               find_close_matches: bool = False,
+               approved_variants: Optional[dict] = None,
+               authorizer: Any = None) -> dict[str, Any]:
     """Every BOM line with what each distributor says about it.
 
     ``bom_lines`` are purchasing BOM lines (manufacturer, part_number,
@@ -315,6 +470,18 @@ def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
     A distributor that cannot answer (no credential, unreachable, rate
     limited) is not asked again in this call: its remaining lines are
     ``not_checked`` with the reason, not ``not_found``.
+
+    With ``find_close_matches``, a line that NO distributor matched exactly
+    gets ``close_matches``: the near misses the distributors list, labelled
+    and ordered by ``purchasing_matching`` (and ``close_match_notes`` in the
+    result). They are advice. A candidate is used only when
+    ``authorizer`` (``purchasing_decisions.Authorizer``) authorizes it: a
+    manual decision of the project, an approval for this call
+    (``approved_variants``, ``purchasing_matching.parse_approvals``), or a
+    global rule. It is then read like any exact match, marked
+    ``mpn_variant`` with who authorized it and how, and the BOM's own
+    number is kept. ``mpn_decisions`` in the result reports the manual
+    decisions that were applied, stale, unused or unchecked.
     """
     sources = {name: pair for name, pair in _providers().items()
                if name in distributors}
@@ -323,6 +490,13 @@ def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
              for name in sources}
     stopped: dict[str, str] = {}
     lines = []
+    if authorizer is None:
+        authorizer = _decisions.Authorizer(call_approvals=approved_variants)
+    approvals = authorizer.call_approvals
+    if find_close_matches:
+        authorizer.start(bom_lines)
+    seen_pairs: set = set()
+    exact_keys: set[str] = set()
     with _cache.fresh(refresh):
         for position, line in enumerate(bom_lines):
             per_board = int(line.get("quantity") or 0)
@@ -332,6 +506,7 @@ def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
                 "part_number": line.get("part_number", ""),
                 "description": line.get("description", ""),
                 "designators": list(line.get("designators") or []),
+                "footprints": list(line.get("footprints") or []),
                 "quantity_per_board": per_board,
                 "required_quantity": per_board * build_quantity,
                 "distributors": {},
@@ -359,9 +534,39 @@ def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
                     state[name]["from_cache" if found["cached"]
                                 else "read_now"] += 1
                 entry["distributors"][name] = found
+            if find_close_matches:
+                did_search = _close_for_line(entry, sources, stopped, state,
+                                             authorizer, seen_pairs)
+                authorizer.note_line(entry, did_search)
+                if not entry["close_matches"] and any(
+                        d["status"] == "matched"
+                        for d in entry["distributors"].values()):
+                    exact_keys.add(_matching.alnum(entry["part_number"]))
             lines.append(entry)
+    notes: list[str] = []
+    if find_close_matches:
+        searched = {pair[0] for pair in seen_pairs}
+        for pair, given in approvals.items():
+            if pair in seen_pairs:
+                continue
+            shown = (f"approval for {given['original_mpn']!r} to "
+                     f"{given['candidate_mpn']!r}")
+            if pair[0] in exact_keys and pair[0] not in searched:
+                notes.append(
+                    f"{shown} was not used: the BOM's own number was found "
+                    "exactly, so no variant is needed")
+            else:
+                notes.append(
+                    f"{shown} matched no close candidate the distributors "
+                    "list, so it was not used")
     for name in sources:
         state[name]["ok"] = name not in stopped
         if name in stopped:
             state[name]["stopped"] = stopped[name]
-    return {"lines": lines, "distributors": state}
+    result: dict[str, Any] = {"lines": lines, "distributors": state}
+    if find_close_matches:
+        report = authorizer.finalize()
+        notes.extend(report["warnings"])
+        result["close_match_notes"] = notes
+        result["mpn_decisions"] = report
+    return result
