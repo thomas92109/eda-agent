@@ -106,6 +106,9 @@ CATALOGUE: dict[str, tuple] = {
                              "every close candidate was rejected for this project"),
     "APPROVED_MPN_VARIANT": (Severity.INFO, "distributor", _ANY,
                              "a close variant of the BOM's part number, approved by the user, is ordered"),
+    "VERIFIED_MPN_ALIAS": (Severity.INFO, "distributor", _ANY,
+                           "the manufacturer documents the ordered number as the same part as the BOM's; "
+                           "the ordered number is shown, the schematic's is unchanged"),
     "SETUP_QUANTITY_RAISED": (Severity.INFO, "quantity", _ANY,
                               "the quantity was raised to a feeder or setup minimum"),
 }
@@ -185,9 +188,15 @@ def lifecycle_reasons(found: Mapping[str, Lifecycle],
                 f"{name} says {lc.raw!r}")
         else:
             unstated.append(name)
+    # Mouser sends nothing for a part in normal production. When another
+    # distributor positively says active, the silence adds nothing and is not
+    # reported; it is reported when the status others give is anything else.
+    says_active = any(lc is not None and lc.status == "active"
+                      for lc in found.values())
     if unstated and not said.get("LIFECYCLE_UNKNOWN"):
         if stated_any:
-            said.setdefault("LIFECYCLE_NOT_STATED", []).extend(unstated)
+            if not says_active:
+                said.setdefault("LIFECYCLE_NOT_STATED", []).extend(unstated)
         elif len(unstated) == len(found):
             said.setdefault("LIFECYCLE_UNKNOWN", []).append(
                 ", ".join(unstated) + " state none")

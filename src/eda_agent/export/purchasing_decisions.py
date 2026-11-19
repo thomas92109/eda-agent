@@ -18,9 +18,13 @@ authorized. There are three ways, from the most specific to the most general:
   applies to every project: only ``formatting`` and ``likely`` can be named,
   and only for a candidate whose manufacturer name is identical. A rule holds
   no part number and no project.
+* the independent option ``[matching] auto_approve_verified_aliases``, which
+  accepts a VERIFIED ALIAS (``purchasing_aliases``: numbers the manufacturer
+  documents as the same part) under the BOM's own manufacturer, and only when
+  it is the one alias listed at that distributor. Off unless the file says so.
 
-A project's manual rejection beats everything, the global rule included, for
-that project only. A manual decision is bound to what it was made about: the
+A project's manual rejection beats everything, the global rule and the alias
+option included, for that project only. A manual decision is bound to what it was made about: the
 component's original manufacturer and part number, and the candidate's
 spelling and manufacturer. If any of them is no longer the same the decision
 is STALE: it is reported and not applied, never silently. These decisions
@@ -219,10 +223,12 @@ class Authorizer:
     def __init__(self, decisions: Iterable[dict[str, Any]] = (),
                  call_approvals: Optional[dict] = None,
                  auto_approve: Iterable[str] = (),
-                 scope: Optional[ProjectScope] = None):
+                 scope: Optional[ProjectScope] = None,
+                 auto_approve_aliases: bool = False):
         self.decisions = list(decisions)
         self.call_approvals = dict(call_approvals or {})
         self.auto = tuple(k for k in auto_approve if k in GLOBAL_RULES)
+        self.auto_aliases = bool(auto_approve_aliases)
         self.scope = scope
         self._by_key = {(_mk(d["original_manufacturer"]),
                          _pk(d["original_mpn"]), _pk(d["candidate_mpn"])): d
@@ -294,6 +300,25 @@ class Authorizer:
         if pair in self.call_approvals:
             return {"status": "approved", "method": "this call only",
                     "decision_id": None, "decided_at": _now(), "note": ""}
+        alias = cand.get("alias") or {}
+        if self.auto_aliases and cand.get("label") == pm.VERIFIED_ALIAS \
+                and alias.get("verified") \
+                and cand.get("manufacturer_match") == "exact" \
+                and not cand.get("manufacturer_override") \
+                and not cand.get("alias_ambiguous"):
+            # Only a manufacturer-documented alias, under the BOM's own
+            # manufacturer, and the only such alias at that distributor. A
+            # project's rejection or manual decision was handled above.
+            return {"status": "approved",
+                    "method": "verified manufacturer alias (automatic)",
+                    "source": "config.toml [matching] "
+                              "auto_approve_verified_aliases = true",
+                    "decision_id": None, "decided_at": None,
+                    "alias_rule": alias.get("rule"),
+                    "evidence": list(alias.get("evidence") or []),
+                    "note": "accepted without a manual approval because the "
+                            "manufacturer documents these numbers as the "
+                            "same part"}
         rule = _BY_LABEL.get(cand.get("label"))
         if rule in self.auto and cand.get("manufacturer_match") == "exact" \
                 and not cand.get("manufacturer_override"):

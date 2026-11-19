@@ -301,7 +301,7 @@ floor that no configuration can lower.
 | `LIFECYCLE_OBSOLETE` | blocking | no | Obsolete |
 | `DISTRIBUTOR_DISCONTINUED` | blocking | no | The distributor's own discontinued flag or status says discontinued |
 | `LIFECYCLE_UNKNOWN` | review | yes | No distributor states a status, or the text is not one this project knows |
-| `LIFECYCLE_NOT_STATED` | info | yes | One distributor sends none (Mouser sends null for parts in production) and another says active |
+| `LIFECYCLE_NOT_STATED` | info | yes | One distributor sends none and no other says active (Mouser sends null for parts in production; beside an active DigiKey it is not reported) |
 | `LIFECYCLE_PRELIMINARY` | info | yes | Preliminary or new product |
 | `DISTRIBUTOR_UNAVAILABLE` | info | yes | One distributor could not answer (no credential, unreachable, rate limited); the other did |
 | `NO_DISTRIBUTOR_DATA` | blocking | no | No distributor answered for this line |
@@ -909,7 +909,7 @@ Data is invented: makers Acme, Globex, Initech, Umbrella; project
 | TS-R11 | `LIFECYCLE_EOL` and `LIFECYCLE_OBSOLETE` |
 | TS-R12 | `DISTRIBUTOR_DISCONTINUED` from the flag with an "active" text |
 | TS-R13 | `LIFECYCLE_UNKNOWN`: no status anywhere; unrecognized text |
-| TS-R14 | Mouser null with DigiKey active: `LIFECYCLE_NOT_STATED`, not unknown |
+| TS-R14 | Mouser null with DigiKey active: no lifecycle reason at all (neither `LIFECYCLE_NOT_STATED` nor unknown) |
 | TS-R15 | `DUPLICATE_SKU` |
 | TS-R16 | `NO_DISTRIBUTOR_DATA` when both are down; `DISTRIBUTOR_UNAVAILABLE` when one is |
 | TS-R17 | One part with four reasons keeps all four |
@@ -985,7 +985,7 @@ Data is invented: makers Acme, Globex, Initech, Umbrella; project
 | R5 | Generated and guarded artifacts: `docs/TOOL_REFERENCE.md` (generated; writes CRLF on Windows and must be converted back to LF), README tool counts, kicad parity entries (reason at most 100 characters), tool metadata (an export tool must not be read-only), the no-dash and no-user-path guards. | Each milestone that adds a tool regenerates and checks these, and runs `git diff --check`. |
 | R6 | `test_on_disk_registrars_are_wired` already fails on `HEAD` (`register_purchasing_tools` is wired through `parts.py`, the test looks in `__init__.py`). | New registrars follow the same wiring and the pre-existing failure is reported, not hidden, in each milestone. |
 | R7 | Cached prices (4 hours) can be older than an ordering decision needs. | Export may use the cache and stamps `retrieved_at`; `prepare` and `commit` bypass it. |
-| R8 | Mouser sends null lifecycle for parts in production. | `LIFECYCLE_NOT_STATED` (info) when another distributor says active; `LIFECYCLE_UNKNOWN` only when nobody states one. |
+| R8 | Mouser sends null lifecycle for parts in production. | No lifecycle reason when another distributor says active; `LIFECYCLE_NOT_STATED` (info) when another states a non-active status; `LIFECYCLE_UNKNOWN` only when nobody states one. |
 | R9 | Mouser has no maximum order quantity in the search offer and DigiKey no order multiple. | `None` means not stated; the engine never invents one; the cart read-back (Mouser's `SalesMaximumOrderQty`) is a second check. |
 | R10 | Mouser inserts are additive, nothing here lowers or removes, and a cart opened in a browser can read back empty. | Target-total logic, a journal, unknown-state handling, no automatic retry after an empty readback (CART-5 to CART-9). |
 | R11 | The Mouser cart check refuses a quantity below the minimum, which a delta add can be. | The orchestrator checks the target total itself and calls the existing add with its own check turned off, with a test that the total is still checked. |

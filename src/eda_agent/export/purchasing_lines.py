@@ -160,6 +160,48 @@ class _Option:
         return out
 
 
+def _restock(options: list["_Option"], required: int) -> tuple:
+    """Where and when stock may come back, for a line no distributor can
+    supply. One dict per matched distributor that is short of stock:
+    ``in_stock``, ``incoming`` (dated lots, earliest first), the manufacturer's
+    ``lead_time_weeks`` and ``manufacturer_stock``, and ``covers_by``: the date
+    its stock plus the lots listed so far first reaches ``required`` (``None``
+    when the listed lots never do). The distributor states the lots; nothing
+    here estimates a date."""
+    out = []
+    for o in options:
+        if not o.matched:
+            continue
+        if not any(d.shortfall in ("out_of_stock", "insufficient_stock")
+                   for _, d in o.decisions):
+            continue
+        found = o.found
+        stock = _int(found.get("stock"))
+        if stock is None:
+            known = [offer.stock for offer, _ in o.decisions
+                     if offer.stock is not None]
+            stock = max(known) if known else 0
+        lots = []
+        for lot in found.get("on_order") or []:
+            quantity = _int(lot.get("quantity"))
+            if quantity and quantity > 0:
+                lots.append({"quantity": quantity,
+                             "date": str(lot.get("date") or "")[:10] or None})
+        lots.sort(key=lambda lot: (lot["date"] is None, lot["date"] or ""))
+        total, covers = stock, None
+        for lot in lots:
+            total += lot["quantity"]
+            if covers is None and total >= required:
+                covers = lot["date"] or "date not stated"
+        out.append({
+            "distributor": o.name, "required": required, "in_stock": stock,
+            "incoming": lots, "covers_by": covers,
+            "lead_time_weeks": found.get("lead_time_weeks"),
+            "manufacturer_stock": _int(found.get("manufacturer_stock")),
+            "retrieved_at": found.get("retrieved_at")})
+    return tuple(out)
+
+
 def _conflicts(entry: dict[str, Any],
                inconsistencies: list[dict[str, Any]]) -> list[str]:
     maker = str(entry.get("manufacturer") or "").casefold()
@@ -204,10 +246,16 @@ def _sourcing_reasons(options: list[_Option], settings: Settings
 
     matched = [o for o in options if o.matched]
     access = [o for o in options if o.status in _ACCESS]
+    # A verified alias was resolved at a distributor: the BOM's number being
+    # absent elsewhere is then only a difference of ordering numbers, which
+    # is not a sourcing problem in itself (stock and price still are).
+    alias_resolved = any(
+        o.matched and (o.found.get("mpn_variant") or {}).get("alias")
+        for o in options)
     for o in options:
-        if o.status == "not_found":
+        if o.status == "not_found" and not alias_resolved:
             add("MPN_NOT_FOUND", o.why_not())
-        elif o.status == "manufacturer_mismatch":
+        elif o.status == "manufacturer_mismatch" and not alias_resolved:
             add("MANUFACTURER_MISMATCH", o.why_not())
         elif o.status == "ambiguous":
             add("AMBIGUOUS_MANUFACTURER", o.why_not())
@@ -309,7 +357,18 @@ def _decide_line(bom: BomLine, entry: dict[str, Any], required: int,
     if chosen is not None:
         offer, decision = chosen.best
         variant = chosen.found.get("mpn_variant")
-        if variant:
+        if variant and variant.get("alias"):
+            approval = variant.get("approval") or {}
+            reasons.append(make_reason(
+                "VERIFIED_MPN_ALIAS",
+                f"the BOM says {bom.part_number!r}; {variant['candidate_mpn']!r}"
+                f" is ordered: {variant['meaning']}. Matched by "
+                f"{variant['alias']['method']} {variant['alias']['rule']!r}; "
+                f"authorized by {approval.get('method', '?')}"
+                + (f" ({approval['source']})" if approval.get("source")
+                   else "")
+                + ". The schematic's number is unchanged", sev))
+        elif variant:
             reasons.append(make_reason(
                 "APPROVED_MPN_VARIANT",
                 f"the BOM says {bom.part_number!r}; {variant['candidate_mpn']!r}"
@@ -394,7 +453,8 @@ def _decide_line(bom: BomLine, entry: dict[str, Any], required: int,
         alternatives=alternatives, suggested_replacement=replacement,
         lifecycle=words,
         matched_mpn=(variant or {}).get("candidate_mpn", ""),
-        mpn_variant=variant)
+        mpn_variant=variant,
+        restock=_restock(options, required) if chosen is None else ())
 
 
 def _unresolved_line(position: int, entry: dict[str, Any],

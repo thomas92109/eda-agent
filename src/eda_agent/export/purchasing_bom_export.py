@@ -54,6 +54,9 @@ COLUMNS: dict[str, str] = {
     "mpn_match": "MPN Match",
     "mpn_approval": "MPN Approval",
     "mpn_audit": "MPN Approval Audit",
+    "mpn_method": "MPN Match Method",
+    "mpn_source": "MPN Approval Source",
+    "mpn_evidence": "MPN Evidence",
     "manufacturer": "Manufacturer",
     "description": "Description",
     "reference_designators": "Reference Designator",
@@ -65,6 +68,10 @@ COLUMNS: dict[str, str] = {
     "extended_cost": "Extended Cost",
     "currency": "Currency",
     "stock": "Stock",
+    "restock_date": "Next Restock Date",
+    "restock_qty": "Next Restock Qty",
+    "restock_covered": "Full Qty Available By",
+    "restock_detail": "Restock Detail",
     "lifecycle": "Lifecycle",
     "purchasing_status": "Purchasing Status",
     "review_reasons": "Review Reasons",
@@ -78,15 +85,20 @@ DEFAULT_COLUMNS: tuple[str, ...] = (
     "required_qty", "purchase_qty", "surplus", "part_number", "matched_mpn",
     "mpn_approval", "mpn_audit", "manufacturer", "description",
     "reference_designators", "distributor", "distributor_sku",
-    "unit_price", "extended_cost", "stock", "lifecycle", "purchasing_status",
-    "review_reasons", "quantity_rule")
+    "unit_price", "extended_cost", "stock", "restock_date", "restock_qty",
+    "restock_covered", "lifecycle", "purchasing_status", "review_reasons",
+    "quantity_rule")
 
 #: Between the reasons of one row.
 DELIMITER = " | "
 
 _NUMBERS = {"bom_quantity", "required_qty", "purchase_qty", "surplus",
-            "unit_price", "extended_cost", "stock", "price_break"}
+            "unit_price", "extended_cost", "stock", "price_break",
+            "restock_qty"}
 _RANK = {Severity.BLOCKING: 0, Severity.REVIEW: 1, Severity.INFO: 2}
+#: ISO dates (yyyy-mm-dd). Excel showing one as a date is the point, not a
+#: corruption, so they are left out of the "Excel would reinterpret" count.
+_DATES = {"restock_date", "restock_covered"}
 
 
 def _valid() -> str:
@@ -184,6 +196,97 @@ def _ordered(pl: PurchaseLine):
     return sorted(pl.reasons, key=lambda r: (_RANK[r.severity], r.code))
 
 
+def _weeks(value: Any) -> str:
+    return format(value, "g") if isinstance(value, (int, float)) else ""
+
+
+def _restock_cells(pl: PurchaseLine) -> dict[str, Any]:
+    """When stock may come back, for a line that is short of it. Only what a
+    distributor states: its incoming lots (Mouser) and the manufacturer's
+    lead time. DigiKey's catalogue gives no incoming lots, so for it the
+    detail says so and quotes the lead time. Blank for a line that can be
+    bought or that has no matched distributor."""
+    rows = pl.restock
+    if not rows:
+        return {"restock_date": "", "restock_qty": "", "restock_covered": "",
+                "restock_detail": ""}
+    dated = [(lot["date"], lot["quantity"], r["distributor"])
+             for r in rows for lot in r["incoming"] if lot["date"]]
+    first = min(dated) if dated else None
+    any_lots = any(r["incoming"] for r in rows)
+    real = [r["covers_by"] for r in rows
+            if r["covers_by"] and r["covers_by"] != "date not stated"]
+    if real:
+        covered = min(real)
+    elif any(r["covers_by"] for r in rows):
+        covered = "date not stated"
+    elif any_lots:
+        covered = "not covered by the incoming stock listed"
+    else:
+        covered = "no incoming stock listed"
+    parts = []
+    for r in rows:
+        text = [f"{r['distributor']}: {r['in_stock']} in stock"]
+        if r["incoming"]:
+            text.append("incoming " + ", ".join(
+                f"{lot['quantity']} on {lot['date'] or 'a date not stated'}"
+                for lot in r["incoming"]))
+            if r["covers_by"]:
+                text.append(f"covers the {r['required']} needed by "
+                            f"{r['covers_by']}")
+            else:
+                text.append(f"the incoming lots do not cover the "
+                            f"{r['required']} needed")
+        else:
+            text.append("no incoming stock listed")
+        if _weeks(r.get("lead_time_weeks")):
+            text.append("manufacturer lead time "
+                        f"{_weeks(r['lead_time_weeks'])} weeks")
+        if r.get("manufacturer_stock"):
+            text.append(f"manufacturer stock {r['manufacturer_stock']}")
+        if r.get("retrieved_at"):
+            text.append(f"read {str(r['retrieved_at'])[:10]}")
+        parts.append("; ".join(text))
+    return {"restock_date": first[0] if first else "",
+            "restock_qty": first[1] if first else "",
+            "restock_covered": covered,
+            "restock_detail": " | ".join(parts)}
+
+
+def _method(v: Optional[dict]) -> str:
+    """How the ordered number was matched to the BOM's."""
+    if not v:
+        return ""
+    alias = v.get("alias") or {}
+    if alias:
+        return f"{alias['method']} {alias['rule']} ({v['label']})"
+    return f"{v['label']}: {v['meaning']}"
+
+
+def _source(v: Optional[dict]) -> str:
+    """Who or what authorized it: a decision, a call, or a config option."""
+    a = (v or {}).get("approval") or {}
+    if not v:
+        return ""
+    return (f"{a['method']}: {a['source']}" if a.get("source")
+            else str(a.get("method", "")))
+
+
+def _evidence(v: Optional[dict]) -> str:
+    alias = (v or {}).get("alias") or {}
+    return " || ".join(alias.get("evidence") or [])
+
+
+def _reason_token(pl: PurchaseLine, reason: Any) -> str:
+    """A reason's code. An applied alias carries the two numbers with it, so
+    the difference is visible whatever columns the file has."""
+    v = pl.mpn_variant
+    if reason.code == "VERIFIED_MPN_ALIAS" and v:
+        return (f"{reason.code} (BOM {v['original_mpn']} -> ordered "
+                f"{v['candidate_mpn']})")
+    return reason.code
+
+
 def _audit(pl: PurchaseLine) -> str:
     """Who authorized the number ordered, and what it replaced."""
     v = pl.mpn_variant
@@ -192,7 +295,11 @@ def _audit(pl: PurchaseLine) -> str:
     a = v.get("approval") or {}
     parts = [f"original {v['original_mpn']} ({v['bom_manufacturer']})",
              f"matched {v['candidate_mpn']} ({v['distributor_manufacturer']})",
-             str(v["label"]), f"authorized by {a.get('method', '?')}"]
+             str(v["label"])]
+    if v.get("alias"):
+        parts.append(f"matching method: {_method(v)}")
+        parts.append(f"approval source: {_source(v)}")
+    parts.append(f"authorized by {a.get('method', '?')}")
     if a.get("decided_at"):
         parts.append(f"decided {a['decided_at']}")
     if a.get("decision_id"):
@@ -203,6 +310,8 @@ def _audit(pl: PurchaseLine) -> str:
         parts.append("not remembered")
     if a.get("note"):
         parts.append(str(a["note"]))
+    if v.get("alias"):
+        parts.append(f"evidence: {_evidence(v)}")
     return "; ".join(parts)
 
 
@@ -228,6 +337,9 @@ def _cells(pl: PurchaseLine) -> dict[str, Any]:
         "mpn_approval": ((pl.mpn_variant or {}).get("approval") or {}).get(
             "method", ""),
         "mpn_audit": _audit(pl),
+        "mpn_method": _method(pl.mpn_variant),
+        "mpn_source": _source(pl.mpn_variant),
+        "mpn_evidence": _evidence(pl.mpn_variant),
         "mpn_match": (f"approved variant ({pl.mpn_variant['label']})"
                       if pl.mpn_variant else "exact" if bought else ""),
         "manufacturer": pl.line.manufacturer,
@@ -241,9 +353,11 @@ def _cells(pl: PurchaseLine) -> dict[str, Any]:
         "extended_cost": _money(d.extended_cost) if bought else "",
         "currency": (o.currency or "") if bought else "",
         "stock": o.stock if bought and o.stock is not None else "",
+        **_restock_cells(pl),
         "lifecycle": pl.lifecycle,
         "purchasing_status": pl.status.value,
-        "review_reasons": DELIMITER.join(r.code for r in reasons),
+        "review_reasons": DELIMITER.join(_reason_token(pl, r)
+                                         for r in reasons),
         "review_detail": DELIMITER.join(f"{r.code}: {r.message}"
                                         for r in reasons),
         "quantity_rule": rule,
@@ -285,7 +399,7 @@ def build_purchasing_bom_csv(lines: Sequence[PurchaseLine],
             text, changed = neutralize_formula(str(value))
             neutralized += changed
             if column not in _NUMBERS and column != "purchasing_status" \
-                    and _excel_reinterprets(text):
+                    and column not in _DATES and _excel_reinterprets(text):
                 reinterpreted[COLUMNS[column]] += 1
             too_long += len(text) > _EXCEL_CELL_LIMIT
             out.append(text)
@@ -308,6 +422,7 @@ def build_purchasing_bom_csv(lines: Sequence[PurchaseLine],
             "authorized it are in the file")
     else:
         warnings_early = ""
+    aliased = [pl for pl in rows if (pl.mpn_variant or {}).get("alias")]
     fitted = [pl for pl in lines if pl.line.kind == "fitted"]
     unresolved = [pl for pl in lines if pl.line.kind == "unresolved"]
     by_status = Counter(pl.status.value for pl in rows)
@@ -324,6 +439,16 @@ def build_purchasing_bom_csv(lines: Sequence[PurchaseLine],
     }
 
     warnings: list[str] = [warnings_early] if warnings_early else []
+    if aliased:
+        warnings.append(
+            f"{len(aliased)} row(s) order a VERIFIED MANUFACTURER ALIAS, not "
+            "the BOM's own number (BOM -> ordered): "
+            + "; ".join(
+                f"{pl.line.part_number} -> {pl.matched_mpn} "
+                f"({_source(pl.mpn_variant)})" for pl in aliased)
+            + ". Each row's Review Reasons names it as VERIFIED_MPN_ALIAS; "
+            "the MPN Approval Audit column holds the method and the "
+            "manufacturer's evidence")
     if counts["blocked"]:
         warnings.append(
             f"{counts['blocked']} row(s) are BLOCKED and must not be ordered "
@@ -374,7 +499,8 @@ CLOSE_MATCH_HEADERS = (
     "Priced Packaging", "Priced SKU", "Pricing Note", "Distributor SKU",
     "Approval",
     "Approval Method", "Decision Date", "Decision ID", "Evidence", "Uncertainty", "Line", "Reference Designator",
-    "BOM Manufacturer")
+    "BOM Manufacturer", "Matching Method", "Approval Source",
+    "Manufacturer Evidence")
 
 
 def build_close_matches_csv(close_matches: Sequence[dict[str, Any]]
@@ -412,6 +538,10 @@ def build_close_matches_csv(close_matches: Sequence[dict[str, Any]]
             "; ".join(c.get("uncertainty") or []),
             c.get("line_id", ""), ", ".join(c.get("designators") or []),
             c.get("bom_manufacturer", ""),
+            (f"{c['alias']['method']} {c['alias']['rule']}"
+             if c.get("alias") else c.get("label", "")),
+            (c.get("decision") or {}).get("source", ""),
+            " || ".join((c.get("alias") or {}).get("evidence") or []),
         ]
         writer.writerow([neutralize_formula(str(x))[0] for x in cells])
     return {"text": buffer.getvalue(), "headers": list(CLOSE_MATCH_HEADERS),

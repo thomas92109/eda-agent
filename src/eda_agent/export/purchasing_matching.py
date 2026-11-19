@@ -14,6 +14,11 @@ never changed.
 
 The labels, in order of likelihood:
 
+* ``Verified Alias``: the manufacturer's own document says the two numbers
+  are the same part (``purchasing_aliases``: a documented ordering-code table
+  or an explicit pair, with the evidence quoted), and the manufacturer is the
+  BOM's. It still needs an authorization, a person's or the
+  ``auto_approve_verified_aliases`` option's.
 * ``Formatting Match``: the letters and digits are identical and only the
   punctuation differs (``USB4110GFA`` and ``USB4110-GF-A``), and the
   manufacturer is the same. Verified by a real listing, but still a
@@ -39,6 +44,7 @@ import re
 from decimal import Decimal
 from typing import Any, Iterable, Optional, Sequence
 
+from . import purchasing_aliases as _aliases
 from .purchasing_model import to_decimal
 from .purchasing_plan import price_offer
 
@@ -49,8 +55,9 @@ __all__ = [
     "LONG_SUFFIX",
     "MatchInputError",
     "POSSIBLE",
-    "maker_alias",
     "UNCERTAIN",
+    "VERIFIED_ALIAS",
+    "maker_alias",
     "alnum",
     "approval_key",
     "classify",
@@ -59,11 +66,12 @@ __all__ = [
     "prefix_query",
 ]
 
+VERIFIED_ALIAS = "Verified Alias"
 FORMATTING = "Formatting Match"
 LIKELY = "Likely Match"
 POSSIBLE = "Possible Match"
 UNCERTAIN = "Uncertain Match"
-LABELS = (FORMATTING, LIKELY, POSSIBLE, UNCERTAIN)
+LABELS = (VERIFIED_ALIAS, FORMATTING, LIKELY, POSSIBLE, UNCERTAIN)
 
 #: A suffix this long (letters and digits) is "substantially longer": one
 #: reason, with others, to call a candidate uncertain.
@@ -302,6 +310,8 @@ def classify(*, bom_manufacturer: str, bom_mpn: str, bom_description: str,
         doubts.append("a description is missing, so the descriptions could "
                       "not be compared")
 
+    alias = None if cand == base else _aliases.find_alias(
+        bom_manufacturer, bom_mpn, candidate_mpn)
     if cand == base:
         kind, suffix = "punctuation", ""
         difference = _punctuation_difference(bom_mpn, candidate_mpn)
@@ -310,6 +320,19 @@ def classify(*, bom_manufacturer: str, bom_mpn: str, bom_description: str,
         evidence.append("the letters and digits are identical; only the "
                         "punctuation differs, and the distributor lists "
                         "this number")
+    elif alias is not None:
+        kind, suffix = "alias", ""
+        difference = alias.difference
+        meaning = alias.meaning
+        label = VERIFIED_ALIAS
+        evidence.append(f"{alias.method}: {alias.summary}")
+        evidence.extend(f"manufacturer evidence: {e.text()}"
+                        for e in alias.evidence)
+        if manufacturer_match == "different":
+            doubts.append("the numbers are documented aliases, but the "
+                          "distributor lists the candidate under another "
+                          "manufacturer, so the alias is not applied "
+                          "automatically")
     elif cand.startswith(base):
         kind = "suffix"
         suffix = _suffix_of(candidate_mpn, base)
@@ -382,6 +405,7 @@ def classify(*, bom_manufacturer: str, bom_mpn: str, bom_description: str,
         "skus": [o["sku"] for o in offers if o.get("sku")],
         "evidence": evidence, "uncertainty": doubts,
         "approved": False,
+        **({"alias": alias.as_dict()} if alias is not None else {}),
     }
 
 
@@ -435,9 +459,11 @@ def parse_approvals(raw: Any) -> dict[tuple[str, str], dict[str, str]]:
         elif alnum(original) == alnum(candidate) \
                 and original.casefold() == candidate.casefold():
             wrong.append("the candidate is the original")
-        elif not alnum(candidate).startswith(alnum(original)):
+        elif not alnum(candidate).startswith(alnum(original)) \
+                and not _aliases.is_registered_pair(original, candidate):
             wrong.append("the candidate must have the original's letters "
-                         "and digits, with at most a suffix added; nothing "
+                         "and digits, with at most a suffix added, or be a "
+                         "manufacturer-documented alias of it; nothing "
                          "else is ever substituted")
         if wrong:
             problems.append({"item": position, "problems": wrong})

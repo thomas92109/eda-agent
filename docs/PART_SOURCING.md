@@ -642,7 +642,8 @@ Columns are chosen and ordered with `columns`, as for the Standard BOM:
 `bom_quantity`, `required_qty`, `purchase_qty`, `surplus`, `part_number`,
 `manufacturer`, `description`, `reference_designators`, `footprint`,
 `distributor`, `distributor_sku`, `packaging`, `unit_price`, `extended_cost`,
-`currency`, `stock`, `lifecycle`, `purchasing_status`, `review_reasons`,
+`currency`, `stock`, `restock_date`, `restock_qty`, `restock_covered`,
+`restock_detail`, `lifecycle`, `purchasing_status`, `review_reasons`,
 `review_detail`, `quantity_rule`, `price_break`, `retrieved_at`. Left out,
 the configured columns are used, or a built-in set. The file is UTF-8 with a
 byte order mark and CRLF line ends, text from a distributor is neutralized
@@ -652,6 +653,29 @@ name is `<project>_purchase_BOM_<n>x.csv`.
 
 Totals in the reply are per currency and never added across currencies.
 Shipping, taxes, tariffs and fees are not included.
+
+### When stock may come back
+
+A line that cannot be bought for lack of stock says when it may be. The columns
+are filled only on such a line (no distributor can supply the requirement) and
+only with what a distributor states: nothing is estimated.
+
+| Column | Meaning |
+|---|---|
+| `restock_date` | The earliest dated incoming lot at any distributor (`yyyy-mm-dd`) |
+| `restock_qty` | The quantity of that lot |
+| `restock_covered` | The date the stock now plus the incoming lots listed so far first reaches the requirement, or `not covered by the incoming stock listed`, `no incoming stock listed`, or `date not stated` |
+| `restock_detail` | Per distributor: stock now, every incoming lot, whether and when they cover the requirement, the manufacturer's lead time and public stock, and when it was read |
+
+Mouser lists incoming lots (quantity and date). DigiKey's catalogue gives none,
+so for DigiKey the detail says "no incoming stock listed" and quotes the
+manufacturer's lead time in weeks, which is a manufacturer figure and not a
+date. A lot is a distributor's statement and can slip: check it before relying on
+it. The dates are written as ISO dates and are not counted among the values
+Excel would reinterpret. `restock_date`, `restock_qty` and `restock_covered` are
+in the built-in columns and the template for a new `config.toml`; an existing
+file keeps its own column list, so add them there (or pass `columns`) to see
+them.
 
 ### How the quantity is chosen
 
@@ -715,6 +739,7 @@ for alternatives.
 
 | Label | What it means | Needs |
 |---|---|---|
+| Verified Alias | The manufacturer's own document says the two numbers are the same part ([below](#verified-manufacturer-aliases)). | Evidence in the registry, and the manufacturer the BOM's. |
 | Formatting Match | The letters and digits are identical; only punctuation differs (`USB4110GFA` and `USB4110-GF-A`). | A real listing, and the manufacturer the same (or a known short name). |
 | Likely Match | The candidate adds a suffix that is a recognised packaging marker, such as `-TR` for tape and reel. | The suffix is a recognised marker, the distributor's own packaging for the candidate is tape or reel, the manufacturer is identical, and nothing contradicts it. |
 | Possible Match | A short suffix whose meaning is not verified (`ABC123A5`), or a recognised marker the distributor does not confirm. | Verify the variant in the manufacturer's ordering information. |
@@ -733,7 +758,7 @@ but as weak evidence only (distributors abbreviate them), so they are shown and
 never change a label.
 
 All candidates are presented together at the end of the analysis, most likely
-first (formatting, likely, possible, uncertain; then identical manufacturer,
+first (verified alias, formatting, likely, possible, uncertain; then identical manufacturer,
 then in stock), in the reply (`close_matches`) and in a companion file next to
 the CSV (`<name>_close_matches.csv`) with, for each: the original number, the
 candidate, the manufacturer, the suffix difference, the label, what the
@@ -750,6 +775,8 @@ A candidate is used only when it is authorized, in this order:
 3. **An approval given for one call** (`approve_mpn_variants`): nothing is
    remembered.
 4. **A global rule** in `config.toml` (below), which applies to every project.
+5. **The verified alias option** `[matching] auto_approve_verified_aliases`
+   (below), for a manufacturer-documented alias only.
 
 Manual approvals and rejections belong to ONE Altium project and never reach
 another. A project is identified by a hash of the canonical, absolute path of
@@ -776,7 +803,7 @@ part_purchasing_mpn_decisions(action="revoke", pairs=[...])   # also "list"
 ```
 
 A pair must be a candidate found now (its letters and digits equal the original's
-or begin with them). It names the original number and the candidate's exact
+or begin with them, or it is a registered manufacturer alias of it). It names the original number and the candidate's exact
 spelling: another spelling of the candidate is not decided. Once recorded, the
 Purchasing BOM export, a later analysis, the DigiKey list and the Mouser cart
 tools use it without being asked again, with no argument to pass.
@@ -829,6 +856,77 @@ match always needs a person. Anything else in the list is refused with a
 warning. The rule holds no part number and no project, the default is empty,
 and a project's manual rejection overrides it for that project.
 
+#### Verified manufacturer aliases
+
+Some makers sell one part under several orderable numbers that differ only in a
+code they define. KEMET's packaging C-Spec is the first case: `C0603C439C5GACTU`
+and `C0603C439C5GAC7411` are the same 4.3 pF part on a 7 inch and a 13 inch
+reel. A distributor may list one while the BOM names the other, and the generic
+suffix search cannot see it (the numbers do not begin alike).
+
+The registry (`src/eda_agent/export/purchasing_aliases.py`) holds only what a
+manufacturer document says, each entry with its evidence: the document, its
+revision, the page or table and the quotation. Two kinds of entry exist:
+
+* a **family rule**: a documented number structure and the table of ordering
+  codes the document defines. Two numbers are aliases only when every character
+  before the code is identical, both codes are in the document's table, each
+  code exists for the part's case size and both are of the same documented grade.
+  A code that is not in the table is an alias of nothing, however similar the
+  numbers look. For KEMET commercial C0G the table is `TU` (7 inch reel,
+  unmarked), `7411` (13 inch reel, unmarked, EIA 0603 and smaller) and `7210`
+  (13 inch reel, unmarked, EIA 0805 and larger), read from KEMET's
+  `C1003_C0G` datasheet of 2/20/2025. An automotive code such as `AUTO7411` is a
+  different grade and is no alias.
+* an **explicit alias**: numbers a manufacturer document names as equivalent.
+
+There is no generic suffix substitution. KEMET `7867` is **not** registered: the
+C1003_C0G datasheet does not mention it, so `C0603C439C5GAC7867` is not an alias
+of `C0603C439C5GACTU` until a KEMET document that does is added as evidence.
+
+A verified alias is found by asking each distributor for the alias numbers
+by their exact number (also where the BOM's own number exists only under another
+maker), and is then labelled `Verified Alias`. It is used like any approved
+candidate: the distributor's actual SKU, minimum, multiple, packaging, stock and
+price breaks are read for the matched number, and the quantity engine works from
+those. The schematic's number is never changed.
+
+```
+[matching]
+auto_approve_verified_aliases = true
+```
+
+* **Off (the default, also when the key is absent).** The alias is listed as a
+  candidate and needs the usual per-project approval with
+  `part_purchasing_mpn_decisions`; it is not used before that.
+* **On.** A verified alias is accepted without being asked again when the
+  distributor lists it under the BOM's own manufacturer (an identical name) and
+  it is the only verified alias listed at that distributor. Two or more at one
+  distributor, a differing manufacturer name or a known short form are left for a
+  person. The option is independent of `auto_approve` and never touches a
+  candidate that is not a verified alias.
+* **A project's rejection overrides it**, for that project only, as it overrides
+  every other authorization. A manual approval of the project is applied first.
+* An existing `config.toml` is never rewritten, so the key is added by hand.
+
+An applied alias is recorded in the Purchasing BOM wherever the columns are:
+
+* **Review Reasons** carries `VERIFIED_MPN_ALIAS (BOM <number> -> ordered <number>)`,
+  an information reason, so the difference is visible even with a column
+  selection made before aliases existed. The line is not `MPN_NOT_FOUND` or
+  `MANUFACTURER_MISMATCH` only because the ordering numbers differ.
+* The export reply and `warnings` name every alias applied, with who accepted it.
+* **MPN Approval Audit** holds the original number and maker, the matched number
+  and maker, the label, the matching method and rule, the approval source, who
+  authorized it and the manufacturer's evidence. The columns `mpn_method`, `mpn_source`
+  and `mpn_evidence` hold the method, the approval source and the evidence on
+  their own, and `matched_mpn` and `mpn_approval` work as for any approved
+  variant. The companion `_close_matches.csv` has the same.
+* In a DigiKey list or Mouser cart proposal the item shows both numbers, the
+  distributor is asked to hold the number ordered, and the approval fingerprint
+  includes the rule, the method and the approval source: switching the option, or
+  approving manually instead, is a new proposal that needs its own approval.
+
 ### Settings: config.toml
 
 The first time a purchasing tool needs it, `config.toml` is created in the
@@ -850,6 +948,7 @@ value came from.
 | `upgrade.price_break_window` | `price_break_window` | 2 |
 | `distributors.prefer` | `prefer` | digikey |
 | `review.large_surplus_ratio` | `large_surplus_ratio` | not set (no warning) |
+| `matching.auto_approve_verified_aliases` | none (file only) | false |
 
 The percentage, the fixed amount and the window are independent, and zero is
 valid for each. The fixed amount applies only to offers in its currency. The
@@ -906,7 +1005,7 @@ configuration change.
 | `LIFECYCLE_OBSOLETE` | blocking | no, fixed | Obsolete |
 | `DISTRIBUTOR_DISCONTINUED` | blocking | no, fixed | Discontinued by the distributor |
 | `LIFECYCLE_UNKNOWN` | review | yes | No distributor states a lifecycle status this project knows |
-| `LIFECYCLE_NOT_STATED` | info | yes | One distributor states no lifecycle status |
+| `LIFECYCLE_NOT_STATED` | info | yes | One distributor states no lifecycle status and no other distributor says active (Mouser's silence beside DigiKey's Active is not reported) |
 | `LIFECYCLE_PRELIMINARY` | info | yes | Preliminary or new product |
 | `DISTRIBUTOR_UNAVAILABLE` | info | yes | One distributor could not answer |
 | `NO_DISTRIBUTOR_DATA` | blocking | no, fixed | No distributor answered for this line |
@@ -914,6 +1013,7 @@ configuration change.
 | `CLOSE_MATCH_AVAILABLE` | info | yes | Close part number candidates are listed; none is used until approved |
 | `CLOSE_MATCH_REJECTED` | info | yes | Every close candidate was rejected for this project |
 | `APPROVED_MPN_VARIANT` | info | yes | A close variant of the BOM's part number, approved by the user, is ordered |
+| `VERIFIED_MPN_ALIAS` | info | yes | The manufacturer documents the ordered number as the same part as the BOM's; both numbers are shown |
 | `SETUP_QUANTITY_RAISED` | info | yes | The quantity was raised to a feeder or setup minimum |
 
 ### Putting the Purchasing BOM in a list or cart

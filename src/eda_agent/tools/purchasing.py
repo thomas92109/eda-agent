@@ -205,8 +205,9 @@ async def _pipeline(settings: Any, project_path: Optional[str],
         except Exception as exc:  # noqa: BLE001 - e.g. an unusable folder
             store_notes.append(f"the project's decisions could not be "
                                f"read ({exc}); none is applied")
-    authorizer = Authorizer(decisions, approvals,
-                            settings.matching_auto_approve, scope)
+    authorizer = Authorizer(
+        decisions, approvals, settings.matching_auto_approve, scope,
+        auto_approve_aliases=settings.matching_auto_approve_verified_aliases)
     analysis = await _analysis(
         settings.assemblies, project_path, variant, False, lines, refresh,
         limit, distributors=settings.enabled,
@@ -489,8 +490,10 @@ def register_purchasing_tools(mcp):
             settings = pc.resolve_settings(None)
         except pc.SettingError as exc:
             return {"ok": False, "reason": str(exc)}
-        authorizer = Authorizer(store.decisions, {},
-                                settings.matching_auto_approve, scope)
+        authorizer = Authorizer(
+            store.decisions, {}, settings.matching_auto_approve, scope,
+            auto_approve_aliases=(
+                settings.matching_auto_approve_verified_aliases))
         analysis = await _analysis(
             settings.assemblies, project_path, variant, False, None, False,
             limit, distributors=settings.enabled,

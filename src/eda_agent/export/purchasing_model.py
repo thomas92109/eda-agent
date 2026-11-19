@@ -216,6 +216,10 @@ class PurchaseLine:
     # close variant of the BOM's own (``line.part_number`` is never changed).
     matched_mpn: str = ""
     mpn_variant: Optional[dict] = None
+    # When a line cannot be bought for lack of stock: one dict per matched
+    # distributor with its stock, incoming lots, lead time and the date its
+    # incoming stock first covers the requirement (see purchasing_lines).
+    restock: tuple = ()
 
 
 def to_jsonable(value: Any) -> Any:

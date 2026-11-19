@@ -26,6 +26,7 @@ import re
 from typing import Any, Callable, Optional
 
 from eda_agent.libimport.providers import _cache
+from eda_agent.export import purchasing_aliases as _aliases
 from eda_agent.export import purchasing_decisions as _decisions
 from eda_agent.export import purchasing_matching as _matching
 from eda_agent.libimport.providers.base import (
@@ -299,6 +300,12 @@ def _read_one(name: str, provider: Any, lookup: Callable,
         "suggested_replacement": sourcing.get("suggested_replacement"),
         "stock": sourcing.get("stock"),
         "lead_time_weeks": (sourcing.get("lead_time") or {}).get("weeks"),
+        # Incoming stock as the distributor lists it ([{quantity, date}]).
+        # Mouser lists lots; DigiKey's catalogue gives none, only the
+        # manufacturer's lead time and public stock.
+        "on_order": [dict(lot) for lot in sourcing.get("on_order") or []
+                     if isinstance(lot, dict)],
+        "manufacturer_stock": sourcing.get("manufacturer_stock"),
         "product_url": sourcing.get("product_url"),
         "offers": offers,
         "cached": bool(held.get("hit")),
@@ -342,6 +349,26 @@ def _close_hits(name: str, provider: Any, number: str) -> list[PartHit]:
     return hits
 
 
+def _alias_hits(provider: Any, lookup: Callable, entry: dict[str, Any]
+                ) -> list[PartHit]:
+    """What a distributor lists under each number the registry
+    (``purchasing_aliases``) says is the BOM number's alias, asked for by
+    that exact number. Only a listing whose number is the alias is kept.
+    Nothing here is a match: ``classify`` judges every hit afterwards."""
+    hits: list[PartHit] = []
+    for alias in _aliases.alias_numbers(entry["manufacturer"],
+                                        entry["part_number"]):
+        try:
+            found = lookup(provider, alias.alias_mpn)
+        except ProviderUnavailable:
+            raise
+        except ProviderError:
+            continue
+        hits.extend(h for h in found
+                    if _mpn_key(h.mpn) == _mpn_key(alias.alias_mpn))
+    return hits
+
+
 def _close_candidates(name: str, hits: list[PartHit], entry: dict[str, Any]
                       ) -> list[dict[str, Any]]:
     out, seen = [], set()
@@ -378,6 +405,23 @@ def _close_candidates(name: str, hits: list[PartHit], entry: dict[str, Any]
     return out
 
 
+def _flag_ambiguous_aliases(found: list[dict[str, Any]]) -> None:
+    """Two or more verified aliases at one distributor: which one to order is
+    a person's choice, so none is accepted automatically."""
+    per_distributor: dict[str, set[str]] = {}
+    for cand in found:
+        if cand.get("label") == _matching.VERIFIED_ALIAS:
+            per_distributor.setdefault(cand["distributor"], set()).add(
+                _mpn_key(cand["candidate_mpn"]))
+    for cand in found:
+        if cand.get("label") == _matching.VERIFIED_ALIAS                 and len(per_distributor[cand["distributor"]]) > 1:
+            cand["alias_ambiguous"] = True
+            cand["uncertainty"].append(
+                f"{len(per_distributor[cand['distributor']])} verified "
+                f"aliases are listed at {cand['distributor']}: none is "
+                "accepted automatically; approve the one to order")
+
+
 def _close_for_line(entry: dict[str, Any], sources: dict, stopped: dict,
                     state: dict, authorizer: Any, seen_pairs: set) -> bool:
     """Close candidates for one BOM line no distributor matched exactly,
@@ -394,17 +438,34 @@ def _close_for_line(entry: dict[str, Any], sources: dict, stopped: dict,
     searched = False
     found: list[dict[str, Any]] = []
     for name, (provider, lookup) in sources.items():
-        if name in stopped or asked.get(name, {}).get("status") != "not_found":
+        status = asked.get(name, {}).get("status")
+        if name in stopped or status not in ("not_found",
+                                             "manufacturer_mismatch"):
             continue
+        hits: list[PartHit] = []
+        if status == "not_found":
+            try:
+                hits = _close_hits(name, provider, str(entry["part_number"]))
+            except ProviderUnavailable as exc:
+                stopped[name] = str(exc)
+                continue
+            except Exception:  # noqa: BLE001 - one line only
+                hits = []
+            else:
+                searched = True
+        # A documented alias is asked for by its exact number, also where
+        # the BOM's own number exists only under another maker.
         try:
-            hits = _close_hits(name, provider, str(entry["part_number"]))
+            hits.extend(_alias_hits(provider, lookup, entry))
         except ProviderUnavailable as exc:
             stopped[name] = str(exc)
             continue
         except Exception:  # noqa: BLE001 - one line only
-            continue
-        searched = True
+            pass
+        else:
+            searched = True
         found.extend(_close_candidates(name, hits, entry))
+    _flag_ambiguous_aliases(found)
     for cand in found:
         pair = _matching.approval_key(cand["original_mpn"],
                                       cand["candidate_mpn"])
@@ -444,7 +505,8 @@ def _close_for_line(entry: dict[str, Any], sources: dict, stopped: dict,
             "manufacturer_differs": bool(cand.get("manufacturer_override")),
             "bom_manufacturer": entry["manufacturer"],
             "distributor_manufacturer": cand["manufacturer"],
-            "approved": True, "approval": verdict}
+            "approved": True, "approval": verdict,
+            **({"alias": cand["alias"]} if cand.get("alias") else {})}
         entry["distributors"][name] = read
         cand["used"] = True
         state[name]["matched"] += 1

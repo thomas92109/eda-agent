@@ -347,8 +347,8 @@ def test_an_end_of_life_part_stays_blocked_whatever_the_settings_say(tmp_path):
 def test_mouser_null_with_digikey_active_is_not_unknown():
     pl = only(build(analysis(entry(
         dk=hit(off("DK-1")), mo=hit(off("MO-1"), lifecycle=None, text=None)))))
-    assert "LIFECYCLE_NOT_STATED" in codes(pl)
-    assert "LIFECYCLE_UNKNOWN" not in codes(pl) and pl.status is S.READY
+    assert not codes(pl) & {"LIFECYCLE_NOT_STATED", "LIFECYCLE_UNKNOWN"}
+    assert pl.status is S.READY
 
 
 def test_an_end_of_life_flag_at_the_other_distributor_counts():

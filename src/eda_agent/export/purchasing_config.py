@@ -88,6 +88,7 @@ _FILE_KEYS = {
 _OTHER_KEYS = {
     ("distributors", "enabled"), ("review", "stale_pricing_hours"),
     ("export", "purchasing_columns"), ("matching", "auto_approve"),
+    ("matching", "auto_approve_verified_aliases"),
 }
 _TABLES = {"assemblies", "overage", "upgrade", "distributors", "review",
            "export", "setup", "matching"}
@@ -149,13 +150,21 @@ stale_pricing_hours = 4
 # written here: they are kept per project, outside this file.
 auto_approve = []
 
+# Accept a VERIFIED MANUFACTURER ALIAS without asking: two ordering numbers
+# that the manufacturer's own document says are the same part (for example a
+# KEMET packaging code, TU and 7411). Never a guessed suffix, never another
+# maker's part. A project's rejection still wins. false: such an alias is
+# listed for the usual per-project approval instead. Absent means false.
+auto_approve_verified_aliases = false
+
 [export]
 purchasing_columns = ["required_qty", "purchase_qty", "surplus",
                       "part_number", "matched_mpn", "mpn_approval",
                       "mpn_audit", "manufacturer", "description",
                       "reference_designators", "distributor",
                       "distributor_sku", "unit_price", "extended_cost",
-                      "stock", "lifecycle", "purchasing_status",
+                      "stock", "restock_date", "restock_qty",
+                      "restock_covered", "lifecycle", "purchasing_status",
                       "review_reasons", "quantity_rule"]
 '''
 
@@ -273,6 +282,7 @@ class _File:
     enabled: Optional[tuple] = None
     stale_hours: Optional[Decimal] = None
     auto_approve: Optional[tuple] = None
+    auto_aliases: Optional[bool] = None
     columns: Optional[tuple] = None
     severity: dict[str, Severity] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -406,6 +416,13 @@ def _read_other(out: _File, name: str, table: str, key: str,
                     "authorized for every project. A possible or uncertain "
                     "match needs a person")
         out.auto_approve = tuple(dict.fromkeys(chosen))
+    elif where == "matching.auto_approve_verified_aliases":
+        if isinstance(value, bool):
+            out.auto_aliases = value
+        else:
+            out.warnings.append(
+                f"{name}: {where} must be true or false, not {value!r}; "
+                "false applies (verified aliases need a person's approval)")
     elif where == "export.purchasing_columns":
         if isinstance(value, list) and value and all(
                 isinstance(v, str) for v in value):
@@ -434,6 +451,7 @@ class Settings:
     stale_pricing_hours: Decimal = Decimal(4)
     purchasing_columns: Optional[tuple] = None
     matching_auto_approve: tuple = ()
+    matching_auto_approve_verified_aliases: bool = False
     severity: Mapping[str, Severity] = field(default_factory=dict)
     sources: Mapping[str, str] = field(default_factory=dict)
     warnings: tuple = ()
@@ -457,6 +475,10 @@ class Settings:
         out = {name: {"value": to_jsonable(getattr(self, name)),
                       "source": self.sources.get(name, "default")}
                for name in SETTING_NAMES}
+        out["auto_approve_verified_aliases"] = {
+            "value": self.matching_auto_approve_verified_aliases,
+            "source": self.sources.get(
+                "matching_auto_approve_verified_aliases", "default")}
         out["config_file"] = {"path": self.config_path,
                               "created_now": self.config_created}
         return out
@@ -483,6 +505,8 @@ def resolve_settings(arguments: Optional[Mapping[str, Any]] = None,
             values[name], sources[name] = file.values[name], "config"
         else:
             values[name], sources[name] = DEFAULTS[name], "default"
+    sources["matching_auto_approve_verified_aliases"] = (
+        "config" if file.auto_aliases is not None else "default")
     return Settings(
         **values,
         enabled=file.enabled or DISTRIBUTORS,
@@ -490,6 +514,7 @@ def resolve_settings(arguments: Optional[Mapping[str, Any]] = None,
         if file.stale_hours is not None else Decimal(4),
         purchasing_columns=file.columns,
         matching_auto_approve=file.auto_approve or (),
+        matching_auto_approve_verified_aliases=bool(file.auto_aliases),
         severity=dict(file.severity),
         sources=sources,
         warnings=tuple(warnings),

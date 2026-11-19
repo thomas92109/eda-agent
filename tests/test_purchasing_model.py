@@ -131,9 +131,14 @@ def test_an_active_part_has_no_lifecycle_reason():
                    "mouser": L("active", "Active")}) == []
 
 
-def test_mouser_null_beside_active_is_not_unknown():
+def test_mouser_null_beside_active_is_neither_unknown_nor_reported():
     codes = _codes({"digikey": L("active", "Active"), "mouser": L(None, None)})
-    assert codes == ["LIFECYCLE_NOT_STATED"]
+    assert codes == []
+
+
+def test_a_silent_distributor_is_reported_when_the_other_is_not_active():
+    codes = _codes({"digikey": L("nrnd", "NRND"), "mouser": L(None, None)})
+    assert codes == ["LIFECYCLE_NRND", "LIFECYCLE_NOT_STATED"]         or set(codes) == {"LIFECYCLE_NRND", "LIFECYCLE_NOT_STATED"}
 
 
 def test_another_distributors_end_of_life_counts():

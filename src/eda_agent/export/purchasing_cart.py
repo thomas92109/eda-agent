@@ -111,6 +111,19 @@ def _canonical(value: Any) -> Any:
     return value
 
 
+def alias_summary(variant: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """What an applied verified alias is, for the proposal, the approval
+    fingerprint and the journal: how it was matched and who authorized it.
+    None for a number that is not an alias."""
+    alias = (variant or {}).get("alias")
+    if not alias:
+        return None
+    approval = variant.get("approval") or {}
+    return {"rule": alias.get("rule"), "method": alias.get("method"),
+            "approval_method": approval.get("method", ""),
+            "approval_source": approval.get("source", "")}
+
+
 def fingerprint(distributor: str, target: dict[str, Any],
                 items: Sequence[dict[str, Any]]) -> str:
     """The approval fingerprint: every figure a person approved."""
@@ -127,6 +140,12 @@ def fingerprint(distributor: str, target: dict[str, Any],
             # The number ordered and the BOM's own: an approved variant
             # changes the first and never the second.
             "ordered_mpn": i["ordered_mpn"], "bom_mpn": i["bom_mpn"],
+            # An alias adds how it was matched and who accepted it, so the
+            # approval is for that decision and a different one (a manual
+            # approval instead of the automatic option, say) is a new
+            # proposal. Items without an alias fingerprint as they did.
+            **({"alias": _canonical(i["mpn_alias"])}
+               if i.get("mpn_alias") else {}),
         } for i in items), key=lambda x: x["sku"].casefold()),
     }
     text = json.dumps(_canonical(body), sort_keys=True,
@@ -200,6 +219,7 @@ def build_proposal(lines: Sequence[PurchaseLine], distributor: str,
             "ordered_mpn": pl.matched_mpn or pl.line.part_number,
             "bom_mpn": pl.line.part_number,
             "mpn_variant": pl.mpn_variant,
+            "mpn_alias": alias_summary(pl.mpn_variant),
             "status": pl.status.value,
             "selected_for_review": pl.status is PurchasingStatus.REVIEW,
             "reasons": sorted({r.code for r in pl.reasons}),
@@ -270,7 +290,9 @@ class Journal:
                            "ordered_mpn": i["ordered_mpn"],
                            "mpn_authorized_by": ((i.get("mpn_variant") or {})
                                                  .get("approval") or {}
-                                                 ).get("method", "")}
+                                                 ).get("method", ""),
+                           **({"mpn_alias": i["mpn_alias"]}
+                              if i.get("mpn_alias") else {})}
                           for i in proposal["items"]],
                 "cart_key": None, "list_id": None, "confirmed": {},
                 "events": []}
