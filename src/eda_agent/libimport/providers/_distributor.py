@@ -41,6 +41,7 @@ from typing import Any, Sequence
 
 from eda_agent.libimport.providers.base import (
     AmbiguousPart,
+    CacheMiss,
     PartHit,
     ProviderError,
     ProviderUnavailable,
@@ -140,7 +141,15 @@ class DistributorProvider:
         else is :class:`ProviderError` (the query failed). The fan-out
         reports those differently and only one of them means the part
         might still exist elsewhere.
+
+        Under ``_cache.cache_only`` nothing is sent: it raises
+        ``CacheMiss``, whatever the call (a token exchange included).
         """
+        from eda_agent.libimport.providers import _cache
+
+        if _cache.cache_only_active():
+            raise CacheMiss(f"{self.name}: cache_only is in force, so no "
+                            "request was sent")
         request = urllib.request.Request(
             url, data=body, method=method,
             headers={"User-Agent": "eda-agent", **(headers or {})})

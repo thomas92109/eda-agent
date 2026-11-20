@@ -50,8 +50,8 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 
 __all__ = [
     "PRICING", "PRODUCT", "SEARCH", "TTL_SECONDS", "account_fingerprint",
-    "cached_call", "clear", "enabled", "forcing_fresh", "fresh", "stats",
-    "ttl_for",
+    "cache_only", "cache_only_active", "cached_call", "clear", "enabled",
+    "forcing_fresh", "fresh", "stats", "ttl_for",
 ]
 
 _LOG = logging.getLogger(__name__)
@@ -123,6 +123,40 @@ def fresh(force: bool = True) -> Iterator[None]:
 
 def forcing_fresh() -> bool:
     return _FRESH.get()
+
+
+#: Set while a caller wants held replies only, and no distributor asked.
+_CACHE_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "eda_agent_distributor_cache_only", default=False)
+
+
+@contextlib.contextmanager
+def cache_only(strict: bool = True) -> Iterator[None]:
+    """Within this block no distributor is asked: STRICT CACHE-ONLY.
+
+    A held reply is given back as usual. Anything else raises
+    ``base.CacheMiss`` without calling ``fetch``: a reply not held, an
+    expired one, a cache that is turned off or cannot be read. It wins
+    over ``fresh``. The distributors' transport refuses too
+    (``_distributor.DistributorProvider._request``), so a call that does
+    not come through here (a token exchange) is not sent either.
+    """
+    token = _CACHE_ONLY.set(bool(strict) or _CACHE_ONLY.get())
+    try:
+        yield
+    finally:
+        _CACHE_ONLY.reset(token)
+
+
+def cache_only_active() -> bool:
+    return _CACHE_ONLY.get()
+
+
+def _miss(distributor: str, why: str) -> Exception:
+    from eda_agent.libimport.providers.base import CacheMiss
+
+    return CacheMiss(f"{distributor}: {why} (cache_only: no request was "
+                     "sent)")
 
 
 def account_fingerprint(*credentials: str) -> str:
@@ -251,8 +285,14 @@ def cached_call(
 
     ``fetch`` raising is not caught: a failed call is never stored and
     reaches the caller exactly as it would without a cache.
+
+    Under ``cache_only`` ``fetch`` is never called: what is not held
+    raises ``base.CacheMiss``.
     """
+    strict = cache_only_active()
     if not enabled():
+        if strict:
+            raise _miss(distributor, "the distributor cache is turned off")
         return fetch(), None
     try:
         wanted = _canonical(request)
@@ -260,9 +300,11 @@ def cached_call(
         key = _key(distributor, endpoint, wanted, setting)
     except Exception as exc:  # noqa: BLE001 - never cost an answer
         _LOG.debug("distributor cache: no key (%s)", exc)
+        if strict:
+            raise _miss(distributor, "the request has no cache key") from exc
         return fetch(), None
 
-    if not forcing_fresh():
+    if strict or not forcing_fresh():
         try:
             held = _read(key, time.time())
         except (sqlite3.Error, OSError) as exc:
@@ -275,6 +317,8 @@ def cached_call(
             payload, fetched_at, expires_at = held
             return payload, {"fetched_at": _iso(fetched_at),
                              "expires_at": _iso(expires_at)}
+    if strict:
+        raise _miss(distributor, "not in the cache, or expired")
 
     payload = fetch()
     try:

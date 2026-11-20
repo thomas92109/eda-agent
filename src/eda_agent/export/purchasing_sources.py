@@ -30,6 +30,7 @@ from eda_agent.export import purchasing_aliases as _aliases
 from eda_agent.export import purchasing_decisions as _decisions
 from eda_agent.export import purchasing_matching as _matching
 from eda_agent.libimport.providers.base import (
+    CacheMiss,
     PartHit,
     ProviderError,
     ProviderUnavailable,
@@ -165,12 +166,17 @@ def _digikey_hits(provider: Any, number: str) -> list[PartHit]:
     ProductDetails answers one product. A number it refuses (two makers
     share it, or it is not a number DigiKey resolves) is searched for
     instead.
+
+    Under cache_only a number whose ProductDetails reply is not held (a
+    refused number never is) is looked for in the held search instead.
     """
     try:
         hit = provider._details(number)
         return [hit] if hit else []
     except ProviderUnavailable:
         raise
+    except CacheMiss:
+        pass
     except ProviderError as exc:
         if getattr(exc, "status", None) not in (400, 404):
             raise
@@ -489,6 +495,8 @@ def _close_for_line(entry: dict[str, Any], sources: dict, stopped: dict,
         try:
             read = _read_one(name, provider, lookup, maker,
                              cand["candidate_mpn"])
+        except CacheMiss as exc:
+            read = {"status": "not_cached", "reason": str(exc)}
         except Exception as exc:  # noqa: BLE001
             read = {"status": "error", "reason": str(exc)}
         if read.get("status") != "matched":
@@ -520,7 +528,8 @@ def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
                distributors: tuple = DISTRIBUTORS,
                find_close_matches: bool = False,
                approved_variants: Optional[dict] = None,
-               authorizer: Any = None) -> dict[str, Any]:
+               authorizer: Any = None,
+               cache_only: bool = False) -> dict[str, Any]:
     """Every BOM line with what each distributor says about it.
 
     ``bom_lines`` are purchasing BOM lines (manufacturer, part_number,
@@ -544,11 +553,18 @@ def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
     ``mpn_variant`` with who authorized it and how, and the BOM's own
     number is kept. ``mpn_decisions`` in the result reports the manual
     decisions that were applied, stale, unused or unchecked.
+
+    With ``cache_only`` (STRICT) no distributor is asked at all, close
+    match and fallback searches included: only replies already in the
+    distributor cache are used, and a line the cache cannot answer is
+    ``not_cached`` (counted as ``not_cached``), never ``not_found``.
+    ``refresh`` is ignored under it.
     """
     sources = {name: pair for name, pair in _providers().items()
                if name in distributors}
     state = {name: {"asked": 0, "matched": 0, "from_cache": 0,
-                    "read_now": 0}
+                    "read_now": 0, **({"not_cached": 0} if cache_only
+                                      else {})}
              for name in sources}
     stopped: dict[str, str] = {}
     lines = []
@@ -559,7 +575,8 @@ def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
         authorizer.start(bom_lines)
     seen_pairs: set = set()
     exact_keys: set[str] = set()
-    with _cache.fresh(refresh):
+    with _cache.cache_only(cache_only), \
+            _cache.fresh(bool(refresh) and not cache_only):
         for position, line in enumerate(bom_lines):
             per_board = int(line.get("quantity") or 0)
             entry: dict[str, Any] = {
@@ -586,6 +603,10 @@ def enrich_bom(bom_lines: list[dict[str, Any]], build_quantity: int = 1,
                 except ProviderUnavailable as exc:
                     stopped[name] = str(exc)
                     found = {"status": "unavailable", "reason": str(exc)}
+                except CacheMiss as exc:
+                    state[name]["not_cached"] = \
+                        state[name].get("not_cached", 0) + 1
+                    found = {"status": "not_cached", "reason": str(exc)}
                 except ProviderError as exc:
                     found = {"status": "error", "reason": str(exc)}
                 except Exception as exc:  # noqa: BLE001 - one line only

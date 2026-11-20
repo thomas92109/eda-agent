@@ -102,6 +102,7 @@ _SET_ASIDE = {
     "part_purchasing_analyze": "reaches distributor networks",
     "part_purchasing_plan": "reaches distributor networks",
     "part_purchasing_export_csv": "reaches distributor networks and writes a file",
+    "part_purchasing_budget_export_csv": "reaches distributor networks and writes a file",
     "part_purchasing_cart_prepare": "reaches distributor networks",
     "part_purchasing_mpn_decisions": "reaches distributor networks and writes a decisions file",
     "part_purchasing_cart_commit": "writes a list or cart at a distributor",

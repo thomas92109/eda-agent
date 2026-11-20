@@ -174,6 +174,7 @@ _CALC_NEEDS_BRIDGE = frozenset({"pcb_calc_polygon_area"})
 _PARTS_NEED_BRIDGE = frozenset({
     "part_purchasing_analyze", "part_purchasing_plan",
     "part_purchasing_mpn_decisions", "part_purchasing_export_csv",
+    "part_purchasing_budget_export_csv",
     "part_purchasing_cart_prepare", "part_purchasing_cart_commit",
 })
 
@@ -306,6 +307,7 @@ INTERACTION_OVERRIDES = {
     # part_purchasing_cart_prepare only reads and stays readonly. The commit
     # writes a list or cart at a distributor and its journal.
     "part_purchasing_export_csv": SILENT,
+    "part_purchasing_budget_export_csv": SILENT,
     # Read the BOM and the distributors and write nothing. They are no
     # longer offline (see _PARTS_NEED_BRIDGE), which was what made them
     # readonly by default.

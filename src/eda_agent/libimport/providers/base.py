@@ -26,6 +26,7 @@ from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
     "AmbiguousPart",
+    "CacheMiss",
     "PartHit",
     "PartProvider",
     "ProviderError",
@@ -55,6 +56,18 @@ class ProviderUnavailable(ProviderError):
     credential or an uninstalled tool is not evidence that the part does
     not exist, and must never be reported as an empty result set.
     """
+
+
+class CacheMiss(ProviderError):
+    """Strict cache-only mode found no held reply, so nothing was sent.
+
+    Raised instead of asking the distributor while ``_cache.cache_only``
+    is in force. It says nothing about whether the part exists: only that
+    no reply for it was in the cache. ``status`` is None, so a caller that
+    falls back on a 400 or 404 does not mistake it for one.
+    """
+
+    status = None
 
 
 class AmbiguousPart(ProviderError):

@@ -31,7 +31,8 @@ async def _analysis(build_quantity: Any, project_path: Optional[str],
                     refuse_incomplete: bool = False,
                     find_close_matches: bool = False,
                     approved_variants: Optional[dict] = None,
-                    authorizer: Any = None) -> dict[str, Any]:
+                    authorizer: Any = None,
+                    cache_only: bool = False) -> dict[str, Any]:
     """The enriched BOM, or an ``ok: False`` reply saying why not.
 
     ``distributors`` limits who is asked (both when omitted).
@@ -96,6 +97,8 @@ async def _analysis(build_quantity: Any, project_path: Optional[str],
         extra["find_close_matches"] = True
         extra["approved_variants"] = approved_variants or {}
         extra["authorizer"] = authorizer
+    if cache_only:
+        extra["cache_only"] = True
     found = enrich_bom(bom_lines, build_quantity, refresh=bool(refresh),
                        **extra)
     summary = bom.get("summary") or {}
@@ -170,7 +173,8 @@ async def _pipeline(settings: Any, project_path: Optional[str],
                     variant: Optional[str], lines: Any, refresh: bool,
                     limit: int, allow_incomplete: bool = False,
                     include_dnp: bool = False,
-                    approvals: Optional[dict] = None) -> dict[str, Any]:
+                    approvals: Optional[dict] = None,
+                    cache_only: bool = False) -> dict[str, Any]:
     """Altium BOM, both distributors, the quantity engine and the review
     engine: the Purchasing BOM's lines. Reads only.
 
@@ -212,7 +216,7 @@ async def _pipeline(settings: Any, project_path: Optional[str],
         settings.assemblies, project_path, variant, False, lines, refresh,
         limit, distributors=settings.enabled,
         refuse_incomplete=not allow_incomplete, find_close_matches=True,
-        authorizer=authorizer)
+        authorizer=authorizer, cache_only=cache_only)
     if not analysis.get("ok"):
         return analysis
     if scope is not None and not project_path:
@@ -247,6 +251,27 @@ async def _pipeline(settings: Any, project_path: Optional[str],
     built = build_purchase_lines(analysis, settings, dnp_lines)
     return {"ok": True, "analysis": analysis, "built": built,
             "dnp_missing": dnp_missing, "project": _project_info(scope, why)}
+
+
+async def _file_stem(analysis: dict[str, Any],
+                     project_path: Optional[str]) -> str:
+    """The start of an export's file name: the project's name, made safe."""
+    import os
+
+    stem = ""
+    if analysis["source"] == "lines":
+        stem = "purchasing"
+    elif project_path:
+        stem = os.path.splitext(os.path.basename(str(project_path)))[0]
+    else:
+        from ..bridge import get_bridge
+        focused = await get_bridge().send_command_async(
+            "project.get_focused")
+        if isinstance(focused, dict):
+            stem = os.path.splitext(
+                str(focused.get("project_name") or ""))[0]
+    return "".join(c if c.isalnum() or c in "-_." else "_"
+                   for c in stem.strip()) or "project"
 
 
 def register_purchasing_tools(mcp):
@@ -711,20 +736,7 @@ def register_purchasing_tools(mcp):
                 "INCOMPLETE: Altium's read was cut short. Quantities may be "
                 "short; do not order from this file")
 
-        stem = ""
-        if analysis["source"] == "lines":
-            stem = "purchasing"
-        elif project_path:
-            stem = os.path.splitext(os.path.basename(str(project_path)))[0]
-        else:
-            from ..bridge import get_bridge
-            focused = await get_bridge().send_command_async(
-                "project.get_focused")
-            if isinstance(focused, dict):
-                stem = os.path.splitext(
-                    str(focused.get("project_name") or ""))[0]
-        stem = "".join(c if c.isalnum() or c in "-_." else "_"
-                       for c in stem.strip()) or "project"
+        stem = await _file_stem(analysis, project_path)
         name = f"{stem}_purchase_BOM_{settings.assemblies}x.csv"
         wanted = os.path.basename(output_path) if output_path else name
         try:
@@ -782,5 +794,181 @@ def register_purchasing_tools(mcp):
             "include_dnp": bool(include_dnp), "complete": complete,
             "summary": built["summary"], "counts": result["counts"],
             "totals": built["totals"], "settings": built["settings"],
+            "distributors": analysis["distributors"], "warnings": warnings,
+        }
+
+    @mcp.tool()
+    async def part_purchasing_budget_export_csv(
+        output_path: str = "",
+        assemblies: Optional[int] = None,
+        distributors: Optional[list[str]] = None,
+        prefer: Optional[str] = None,
+        project_path: Optional[str] = None,
+        variant: Optional[str] = None,
+        lines: Optional[list[dict[str, Any]]] = None,
+        refresh: bool = False,
+        limit: int = 1000,
+        allow_incomplete: bool = False,
+        cache_only: bool = False,
+    ) -> dict[str, Any]:
+        """Write a BUDGETING BOM to a CSV file: what the build would cost.
+
+        Not the Purchasing BOM (part_purchasing_export_csv), which stays as
+        it is. READS ONLY: no cart, list or Altium change. The reply has
+        counts and subtotals, never the BOM.
+
+        Every fitted line and unresolved component is a row, also when it
+        is out of stock, blocked or unpriced. Each line is priced for
+        ``assemblies`` boards at the price break its quantity reaches,
+        raised to the minimum order and multiple; a higher break only when
+        it costs less. STOCK IS NOT A LIMIT: a short or out-of-stock part
+        keeps its price, with its stock beside it.
+
+        Only the BOM's exact part number, or a close variant already
+        authorized (project decision or config.toml global rule), is
+        priced. An unapproved close candidate never is.
+
+        Price Source per row: ``current`` (read now), ``cached`` (reused
+        from the distributor cache, with the time read) or ``missing``. The
+        money is a PRICED SUBTOTAL; ``estimated_total`` is set only when
+        every line is priced in one currency. The CSV ends with summary
+        rows: the priced subtotal per currency, the priced and unpriced
+        line counts, and an ESTIMATED TOTAL row only when that holds.
+
+        API CALLS: replies are reused from the cache (up to 4 hours) unless
+        ``refresh``. ``distributors`` limits who is asked (e.g.
+        ["mouser"] to spare DigiKey's daily limit). ``cache_only`` is
+        STRICT: no DigiKey or Mouser call at all, fallback and close-match
+        searches included; a line the cache cannot answer is unpriced
+        (``not_cached``). It cannot be combined with ``refresh``.
+
+        Args:
+            output_path: A file to write; empty picks the default name.
+            assemblies: Boards to build (default from config.toml).
+            distributors: Subset of digikey, mouser to ask and price from.
+            prefer: digikey, mouser or lowest: whose price a line takes
+                when both have one (default from config.toml).
+            project_path, variant, lines, refresh, limit,
+                allow_incomplete: As part_purchasing_export_csv.
+            cache_only: Price from the distributor cache only; never ask
+                a distributor.
+
+        Returns:
+            {"ok", "output_path", "rows", "assemblies", "complete",
+            "totals", "distributors", "warnings"}, or {"ok": False,
+            "reason"}. The file goes to the export folder's ``bom``
+            folder, never overwritten; a repository path is refused.
+        """
+        import dataclasses
+        import os
+
+        from ..export import purchasing_config as pc
+        from ..export.destination import ExportPathError, claimed, export_file
+        from ..export.purchasing_bom_csv import ENCODING
+        from ..export.purchasing_budget import (
+            budget_lines,
+            budget_totals,
+            build_budget_csv,
+        )
+        from ..export.purchasing_sources import DISTRIBUTORS
+
+        if cache_only and refresh:
+            return {"ok": False, "reason": (
+                "cache_only and refresh contradict each other: cache_only "
+                "never asks a distributor, refresh always does. Nothing was "
+                "looked up or written.")}
+        try:
+            settings = pc.resolve_settings({"assemblies": assemblies,
+                                            "prefer": prefer})
+        except pc.SettingError as exc:
+            return {"ok": False, "problems": exc.problems,
+                    "reason": "settings refused: " + "; ".join(exc.problems)}
+        if distributors is not None:
+            chosen = [str(d).strip().lower() for d in distributors]
+            unknown = [d for d in chosen if d not in DISTRIBUTORS]
+            if not chosen or unknown:
+                return {"ok": False, "reason": (
+                    f"distributors {distributors!r} refused: name one or "
+                    f"more of {', '.join(DISTRIBUTORS)}")}
+            settings = dataclasses.replace(
+                settings, enabled=tuple(dict.fromkeys(chosen)))
+
+        piped = await _pipeline(settings, project_path, variant, lines,
+                                refresh, limit, allow_incomplete,
+                                cache_only=bool(cache_only))
+        if not piped.get("ok"):
+            return piped
+        analysis = piped["analysis"]
+        budget = budget_lines(analysis, settings)
+        if not budget:
+            return {"ok": False, "reason": (
+                "the BOM has no lines to budget. Nothing was written.")}
+        result = build_budget_csv(budget)
+        totals = budget_totals(budget)
+
+        warnings = [*settings.warnings, *result["warnings"]]
+        complete = bool(analysis.get("bom_complete", True))
+        if not complete:
+            warnings.append(
+                "INCOMPLETE: Altium's read was cut short. Quantities may be "
+                "short, so the subtotal is too")
+        if not totals["pricing_complete"]:
+            warnings.append(totals["note"])
+        if totals["priced_but_stock_short"]:
+            warnings.append(
+                f"{totals['priced_but_stock_short']} priced line(s) are short "
+                "of stock or out of stock: priced for budgeting, not "
+                "orderable as they stand")
+        stopped = {name: d.get("stopped") for name, d in
+                   (analysis.get("distributors") or {}).items()
+                   if d.get("stopped")}
+        for name, why in stopped.items():
+            warnings.append(f"{name} stopped answering ({why}); its "
+                            "remaining lines are unpriced there")
+        if cache_only:
+            missed = sum(
+                1 for line in analysis.get("lines") or []
+                if any(d.get("status") == "not_cached"
+                       for d in (line.get("distributors") or {}).values()))
+            warnings.append(
+                "cache_only: no distributor was asked; prices come from the "
+                "distributor cache only"
+                + (f". {missed} line(s) were not in the cache at one or more "
+                   "distributors" if missed else ""))
+
+        stem = await _file_stem(analysis, project_path)
+        name = f"{stem}_budget_BOM_{settings.assemblies}x.csv"
+        wanted = os.path.basename(output_path) if output_path else name
+        try:
+            out = export_file(output_path, "bom", name)
+        except ExportPathError as exc:
+            return {"ok": False, "reason": str(exc)}
+        except OSError as exc:
+            return {"ok": False,
+                    "reason": f"could not create the file: {exc}"}
+        try:
+            with claimed([out]):
+                out.write_bytes(result["text"].encode(ENCODING))
+        except OSError as exc:
+            return {"ok": False, "reason": (
+                f"could not write {out}: {exc}. The partial file was "
+                "removed.")}
+        if out.name != wanted:
+            warnings.append(
+                f"{wanted} already exists, so this export was written as "
+                f"{out.name}; nothing was overwritten")
+        return {
+            "ok": True, "output_path": os.path.abspath(out),
+            "rows": result["rows"], "summary_rows": result["summary_rows"],
+            "headers": result["headers"],
+            "assemblies": settings.assemblies,
+            "variant": (analysis.get("bom_summary") or {}).get("variant"),
+            "complete": complete, "project": piped.get("project"),
+            "totals": totals,
+            "settings": {"prefer": settings.prefer,
+                         "distributors": list(settings.enabled),
+                         "cache_only": bool(cache_only),
+                         "stale_pricing_hours": format(
+                             settings.stale_pricing_hours, "f")},
             "distributors": analysis["distributors"], "warnings": warnings,
         }
